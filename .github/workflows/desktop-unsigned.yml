@@ -75,7 +75,9 @@ jobs:
         if: always()
         with:
           name: desktop-mac-arm64-unsigned
-          path: apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/
+          path: |
+            apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/*.dmg
+            apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/*.zip
           if-no-files-found: warn
           retention-days: 14
 
@@ -130,6 +132,58 @@ jobs:
         if: always()
         with:
           name: desktop-win-x64-unsigned
-          path: apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/
+          path: |
+            apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/*.exe
+            apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/*.exe.blockmap
           if-no-files-found: warn
           retention-days: 14
+
+  # Both platform artifacts become downloadable release assets. The release is
+  # keyed by `desktop-v<version>`, separate from the npm `dsh-v` release tags.
+  publish:
+    needs: [mac-arm64, win-x64]
+    if: ${{ !cancelled() && !failure() }}
+    name: publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          tag="desktop-v${version}"
+          # A prerelease identifier in the version keeps the release out of "latest".
+          flavor=--prerelease
+          case "$version" in *-*) ;; *) flavor=--latest ;; esac
+          mapfile -t files < <(find packages -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) | sort)
+          if [ ${#files[@]} -eq 0 ]; then echo "no package files to publish" >&2; exit 1; fi
+          {
+            echo "未签名测试包 / Unsigned test packages."
+            echo
+            echo "- macOS (Apple Silicon): ad-hoc signed, not notarized. First launch: Control-click → Open, or \`xattr -dr com.apple.quarantine \"/Applications/DeepSeek Harness.app\"\`."
+            echo "- Windows x64: unsigned NSIS installer. On the SmartScreen prompt choose 更多信息 → 仍要运行 (More info → Run anyway)."
+            echo "- Neither package carries automatic-update configuration; use the signed release flow for distribution."
+            echo
+            echo '```'
+            sha256sum "${files[@]}"
+            echo '```'
+          } > release-notes.md
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+            gh release edit "$tag" --notes-file release-notes.md
+          else
+            gh release create "$tag" "${files[@]}" $flavor --target "$GITHUB_SHA" \
+              --title "DeepSeek Harness Desktop ${version} (unsigned)" --notes-file release-notes.md
+          fi
