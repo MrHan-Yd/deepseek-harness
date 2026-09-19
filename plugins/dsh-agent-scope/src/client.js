@@ -36,7 +36,6 @@ window.__ModuleLoader__.load({
       title: '子智能体',
       count: '子智能体',
       search: '搜索子智能体…',
-      scopeAll: '全部作用域',
       global: '全局',
       workspace: '工作区',
       installed: '已安装',
@@ -100,7 +99,6 @@ window.__ModuleLoader__.load({
       title: 'Sub-agents',
       count: 'Sub-agents',
       search: 'Search sub-agents…',
-      scopeAll: 'All scopes',
       global: 'Global',
       workspace: 'Workspace',
       installed: 'Installed',
@@ -623,7 +621,7 @@ window.__ModuleLoader__.load({
       const [form, setForm] = useState(undefined)
       const [pending, setPending] = useState('')
       const [query, setQuery] = useState('')
-      const [scopeFilter, setScopeFilter] = useState('all')
+      const [scopeFilter, setScopeFilter] = useState('global')
 
       const refresh = useCallback(async () => {
         try {
@@ -659,7 +657,7 @@ window.__ModuleLoader__.load({
         || (description ?? '').toLowerCase().includes(needle)
       // The toolbar count answers the scope filter alone; the section count also
       // answers the search box, so the two differ only while searching.
-      const inScope = agents.filter(agent => scopeFilter === 'all' || agent.scope === scopeFilter)
+      const inScope = agents.filter(agent => agent.scope === scopeFilter)
       const visible = inScope.filter(agent => matches(agent.name, agent.description))
 
       if (form !== undefined) {
@@ -681,7 +679,6 @@ window.__ModuleLoader__.load({
       }
 
       const scopeOptions = [
-        h('option', { key: 'all', value: 'all' }, t('scopeAll')),
         h('option', { key: 'global', value: 'global' }, t('global')),
         // Registered workspaces first, then any other scope a definition
         // already stores: a scope survives its workspace leaving the registry,

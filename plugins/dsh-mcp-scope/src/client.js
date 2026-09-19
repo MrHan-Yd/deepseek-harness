@@ -29,7 +29,6 @@ window.__ModuleLoader__.load({
       title: 'MCP 服务器',
       count: 'MCP 服务器',
       search: '搜索 MCP 服务器…',
-      scopeAll: '全部作用域',
       global: '全局',
       workspace: '工作区',
       installed: '已安装',
@@ -97,7 +96,6 @@ window.__ModuleLoader__.load({
       title: 'MCP servers',
       count: 'MCP servers',
       search: 'Search MCP servers…',
-      scopeAll: 'All scopes',
       global: 'Global',
       workspace: 'Workspace',
       installed: 'Installed',
@@ -687,7 +685,7 @@ window.__ModuleLoader__.load({
       const [trialResult, setTrialResult] = useState(undefined)
       const [trialBusy, setTrialBusy] = useState(false)
       const [query, setQuery] = useState('')
-      const [scopeFilter, setScopeFilter] = useState('all')
+      const [scopeFilter, setScopeFilter] = useState('global')
 
       const refresh = useCallback(async () => {
         try {
@@ -715,7 +713,7 @@ window.__ModuleLoader__.load({
           : server.url ?? '').toLowerCase().includes(needle)
       // The toolbar count answers the scope filter alone; the section count also
       // answers the search box, so the two differ only while searching.
-      const inScope = servers.filter(server => scopeFilter === 'all' || server.scope === scopeFilter)
+      const inScope = servers.filter(server => server.scope === scopeFilter)
       const visible = inScope.filter(matches)
 
       const run = async (work) => {
@@ -775,7 +773,6 @@ window.__ModuleLoader__.load({
       }
 
       const scopeOptions = [
-        h('option', { key: 'all', value: 'all' }, t('scopeAll')),
         h('option', { key: 'global', value: 'global' }, t('global')),
         // Registered workspaces first, then any other scope a server already
         // stores: a scope survives its workspace leaving the registry, and a
