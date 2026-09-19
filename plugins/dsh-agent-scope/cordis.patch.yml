@@ -1,0 +1,9 @@
+# dsh-agent-scope bundle patch: mount the workspace-scoped sub-agent manager.
+# An id-targeted override in the profile's cordis.patch.yml replaces the whole
+# config row, so restate every key when overriding.
+- insert:
+    - id: agent-scope
+      name: dsh-agent-scope
+      config:
+        # Override the definition store location. Defaults to $DSH_HOME/agent-scope.json.
+        # storePath: /absolute/path/agent-scope.json
