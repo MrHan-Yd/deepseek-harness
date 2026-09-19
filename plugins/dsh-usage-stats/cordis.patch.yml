@@ -1,0 +1,9 @@
+# dsh-usage-stats bundle patch: mount the installation-wide usage page.
+# An id-targeted override in the profile's cordis.patch.yml replaces the whole
+# config row, so restate every key when overriding.
+- insert:
+    - id: usage-stats
+      name: dsh-usage-stats
+      config:
+        # Override the fold-cache location. Defaults to $DSH_HOME/usage-stats-cache.json.
+        # cachePath: /absolute/path/usage-stats-cache.json
