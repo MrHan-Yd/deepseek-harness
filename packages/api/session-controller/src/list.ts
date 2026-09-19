@@ -23,6 +23,18 @@ const SEARCH_PROVIDER_CALL_LIMIT = 100
 const SESSION_SEARCH_QUERY_MAX_CHARS = 500
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
 
+/**
+ * Committed event types that give a Session's transcript a row, clearing
+ * {@link SessionListMetadata.blank}.
+ *
+ * `command/run` belongs here because command lifecycle rows are themselves
+ * transcript nodes: a Session whose only committed event is one command run is
+ * not empty by any reader's standard. Leaving it blank keeps a client on the
+ * empty-Session hero, which covers that row and its result — the entire
+ * visible outcome of a command executed before the Session's first turn.
+ */
+const CONTENT_EVENT_TYPES: ReadonlySet<string> = new Set(['turn/start', 'command/run'])
+
 const sessionListMetadataSchema: z.ZodType<SessionListMetadata> = z.object({
   blank: z.boolean(),
   lastPromptAt: z.number().nullable(),
@@ -47,7 +59,7 @@ export function applySessionListMetadata(
   state: SessionListMetadata,
   event: SessionEvent,
 ): SessionListMetadata {
-  const blank = state.blank && event.type !== 'turn/start'
+  const blank = state.blank && !CONTENT_EVENT_TYPES.has(event.type)
   const lastPromptAt = event.type === 'user/message' && event.data.source.kind === 'user'
     ? event.time
     : state.lastPromptAt

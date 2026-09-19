@@ -284,13 +284,15 @@ export class Session implements SessionFace {
       return result
     }
     // Blank flips on ACCEPTANCE, not attempt: an accepted prompt starts the
-    // conversation's first turn on the host (the host criterion — a logged
-    // turn/start — is fact, not optimism; standalone command and projection
-    // events never flip it), while a rejected first prompt must keep the
-    // session blank — the client-side blank mirror only ever lowers, so
-    // flipping early on a failure would surface the session forever and
-    // strip its connectWorkspace reuse eligibility against the host's
-    // authority.
+    // conversation's first turn on the host, and the host criterion — a logged
+    // transcript row, whether a turn start or an executed command — is fact,
+    // not optimism. A command is the exception this local flip does not cover:
+    // it commits its row without passing through prompt acceptance, so the
+    // mirror keeps it blank until a Session-list refresh relays the host's
+    // verdict. A rejected first prompt must keep the session blank — the
+    // client-side blank mirror only ever lowers, so flipping early on a failure
+    // would surface the session forever and strip its connectWorkspace reuse
+    // eligibility against the host's authority.
     if (this.blankBit) {
       this.blankBit = false
       this.options.onEngaged?.(this)
