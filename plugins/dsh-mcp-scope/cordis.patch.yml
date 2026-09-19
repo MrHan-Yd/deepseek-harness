@@ -1,0 +1,9 @@
+# dsh-mcp-scope bundle patch: mount the workspace-scoped MCP manager.
+# An id-targeted override in the profile's cordis.patch.yml replaces the whole
+# config row, so restate every key when overriding.
+- insert:
+    - id: mcp-scope
+      name: dsh-mcp-scope
+      config:
+        # Override the server store location. Defaults to $DSH_HOME/mcp-scope.json.
+        # storePath: /absolute/path/mcp-scope.json

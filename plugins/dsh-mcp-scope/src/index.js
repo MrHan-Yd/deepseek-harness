@@ -1,0 +1,1039 @@
+/**
+ * dsh-mcp-scope — workspace-scoped MCP servers for DeepSeek Harness.
+ *
+ * Two scopes per server:
+ *   'global'      every session sees the server's tools.
+ *   '<abs path>'  only sessions whose canonical cwd is that workspace directory
+ *                 or a descendant of it see the server's tools.
+ *
+ * Enforcement is per session. Every enabled server is mounted once on the root
+ * context, and each agent receives a `tools.restrict({ deny })` mask naming the
+ * tools of the servers outside its scope. `tools.restrict` requires a scoped
+ * context, which `agent.ctx` is; a context-global restriction would mask every
+ * agent, so the mask is always applied per agent and lifted on disposal.
+ *
+ * The Settings page talks to this half over a same-origin HTTP API rather than
+ * a typed Remote: the plugin ships no generated Remote assembly, and the route
+ * handler is small enough to audit in place. Every request must carry the
+ * `x-dsh-mcp-scope` header, which a cross-origin page cannot set without a CORS
+ * preflight this server never grants; an `Origin` present on the request must
+ * also match the request `Host`.
+ *
+ * Function plugin: named exports and no default export, so the Loader keeps the
+ * namespace.
+ *
+ * @module dsh-mcp-scope
+ */
+
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve, sep } from 'node:path'
+import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { DEFAULT_PROBE_TIMEOUT_MS, diagnose, probeServer, sanitizeText } from './probe.js'
+
+export const name = 'mcp-scope'
+
+/** Hard services: the tool registry the mask targets, and the agent lifecycle events. */
+export const inject = ['tools', 'agents']
+
+/** Route prefix owned by this plugin. */
+const API_PATH = '/mcp-scope/api'
+
+/** Request header a cross-origin page cannot set without a granted preflight. */
+const GUARD_HEADER = 'x-dsh-mcp-scope'
+
+/** Tool-name prefix the official MCP client registers under. */
+const TOOL_PREFIX = 'mcp__'
+
+/** Cap on one request body, in bytes. */
+const MAX_BODY_BYTES = 256 * 1024
+
+/** The one scope value meaning "every workspace". */
+const GLOBAL_SCOPE = 'global'
+
+/** Server name contract shared with the official MCP client. */
+const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
+
+/**
+ * Resolve the server store path.
+ * @param config - raw plugin config.
+ * @returns the absolute store path.
+ */
+function storePathOf(config) {
+  const configured = typeof config?.storePath === 'string' ? config.storePath.trim() : ''
+  if (configured !== '') return resolve(configured)
+  const home = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.trim() !== ''
+    ? process.env.DSH_HOME.trim()
+    : join(homedir(), '.dsh')
+  return join(home, 'mcp-scope.json')
+}
+
+/**
+ * Canonicalize a directory path so scope comparison survives symlinks.
+ * @param path - candidate path.
+ * @returns the realpath when it exists, otherwise the resolved path.
+ */
+function canonical(path) {
+  const resolved = resolve(path)
+  try {
+    return realpathSync(resolved)
+  } catch {
+    // A workspace directory can be deleted while its record survives; the
+    // resolved spelling is then the best identity available.
+    return resolved
+  }
+}
+
+/**
+ * Whether a session cwd falls inside a workspace scope.
+ * @param cwd - canonical session cwd, or '' when the header carries none.
+ * @param scope - absolute workspace path.
+ * @returns true when the session runs in that workspace or below it.
+ */
+function inScope(cwd, scope) {
+  if (cwd === '') return false
+  const target = canonical(scope)
+  return cwd === target || cwd.startsWith(target.endsWith(sep) ? target : target + sep)
+}
+
+/**
+ * Normalize one scope value.
+ * @param value - 'global' or an absolute directory path.
+ * @returns the normalized scope.
+ */
+function normalizeScope(value) {
+  if (value === undefined || value === null || value === '' || value === GLOBAL_SCOPE) return GLOBAL_SCOPE
+  const text = String(value).trim()
+  if (text === GLOBAL_SCOPE) return GLOBAL_SCOPE
+  if (!text.startsWith('/')) throw new Error('a workspace scope must be an absolute path')
+  return resolve(text)
+}
+
+/**
+ * Read a string map field, rejecting non-string entries.
+ * @param value - candidate map.
+ * @param label - field name used in the error.
+ * @returns the validated map.
+ */
+function stringMap(value, label) {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
+  const result = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== 'string') throw new Error(`${label}.${key} must be a string`)
+    if (key.trim() === '') throw new Error(`${label} keys must be non-empty`)
+    result[key] = entry
+  }
+  return result
+}
+
+/**
+ * Validate one incoming server record from the Settings page.
+ * @param input - raw record.
+ * @returns the normalized server record.
+ */
+function validateServer(input) {
+  if (typeof input !== 'object' || input === null) throw new Error('server must be an object')
+  const serverName = String(input.serverName ?? '').trim()
+  if (!SERVER_NAME_PATTERN.test(serverName)) {
+    throw new Error('serverName must match [A-Za-z0-9_-]{1,32}')
+  }
+  if (serverName.includes('__')) {
+    // Tool names are `mcp__<serverName>__<tool>`, and this plugin attributes a
+    // tool to a server by that prefix. `db` and `db__prod` would then both
+    // claim `mcp__db__prod__*`, so one server's tools would be masked — or
+    // reported — as the other's.
+    throw new Error('serverName cannot contain "__": it would collide with the mcp__<serverName>__ tool prefix of another server')
+  }
+  const transport = input.transport === 'streamable-http' ? 'streamable-http' : 'stdio'
+  const timeout = Number(input.toolCallTimeoutMs)
+  const toolCallTimeoutMs = Number.isInteger(timeout) && timeout > 0 ? timeout : 30000
+  const server = {
+    serverName,
+    transport,
+    scope: normalizeScope(input.scope),
+    enabled: input.enabled !== false,
+    toolCallTimeoutMs,
+  }
+  if (transport === 'stdio') {
+    const command = String(input.command ?? '').trim()
+    if (command === '') throw new Error('command is required for a stdio server')
+    server.command = command
+    server.args = Array.isArray(input.args) ? input.args.map(String) : []
+    server.env = stringMap(input.env, 'env')
+    server.cwd = typeof input.cwd === 'string' ? input.cwd.trim() : ''
+  } else {
+    const url = String(input.url ?? '').trim()
+    if (!/^https?:\/\//u.test(url)) throw new Error('url must start with http:// or https://')
+    server.url = url
+    server.headers = stringMap(input.headers, 'headers')
+  }
+  return server
+}
+
+/**
+ * Project one stored server onto the official MCP client's config.
+ * @param server - validated server record.
+ * @returns the `@deepseek-ai/dsh-mcp-client` config.
+ */
+function toClientConfig(server) {
+  // `failOnStartupError: false` keeps one unreachable server from refusing the
+  // whole mount; the official client retries and the page renders the reason.
+  const base = {
+    serverName: server.serverName,
+    transport: server.transport,
+    toolCallTimeoutMs: server.toolCallTimeoutMs,
+    failOnStartupError: false,
+  }
+  if (server.transport === 'stdio') {
+    return { ...base, command: server.command, args: server.args, env: server.env, cwd: server.cwd }
+  }
+  return { ...base, url: server.url, headers: server.headers }
+}
+
+/**
+ * Replace one server's credential values with their key names for the page.
+ *
+ * A stdio `env` and an http `headers` map routinely hold bearer tokens. The
+ * page needs the keys to let a person edit them; it never needs the values,
+ * and shipping them would place credentials in the DOM and in every fetch log
+ * the browser keeps.
+ *
+ * @param server - the stored server record.
+ * @returns the record with values withheld and key names exposed.
+ */
+function redactSecrets(server) {
+  const { env, headers, ...rest } = server
+  return {
+    ...rest,
+    ...(env === undefined ? {} : { envKeys: Object.keys(env) }),
+    ...(headers === undefined ? {} : { headerKeys: Object.keys(headers) }),
+  }
+}
+
+/**
+ * Keep the stored value for a key the page submitted blank.
+ *
+ * The page never receives credential values, so an untouched key round-trips
+ * as an empty string. Taking that literally would erase the credential on the
+ * first save that changed an unrelated field.
+ *
+ * @param submitted - the map from the request.
+ * @param stored - the map already on disk.
+ * @returns the merged map.
+ */
+function mergeSecrets(submitted, stored) {
+  const result = {}
+  for (const [key, value] of Object.entries(submitted ?? {})) {
+    result[key] = value === '' && typeof stored?.[key] === 'string' ? stored[key] : value
+  }
+  return result
+}
+
+/** Mutable server store backed by one JSON file. */
+class ServerStore {
+  /** @param path - absolute store path. */
+  constructor(path) {
+    this.path = path
+    this.servers = []
+  }
+
+  /** Load the file, tolerating a missing or unreadable store. */
+  load() {
+    try {
+      const parsed = JSON.parse(readFileSync(this.path, 'utf8'))
+      const rows = Array.isArray(parsed?.servers) ? parsed.servers : []
+      this.servers = rows.map(row => validateServer(row))
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        // A corrupt store must not take the page down; the next write replaces it.
+        this.servers = []
+        this.loadError = error instanceof Error ? error.message : String(error)
+      }
+    }
+    return this.servers
+  }
+
+  /** Persist the store atomically and owner-only. */
+  save() {
+    // The store holds credentials: a stdio `env` or an http `headers` map can
+    // carry a bearer token. Create the directory and the file readable by the
+    // owner alone, and use an unpredictable exclusive temp name so a second
+    // writer is never handed another process's partial file.
+    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 })
+    const body = JSON.stringify({ version: 1, servers: [...this.servers].sort(byName) }, null, 2)
+    const temporary = `${this.path}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
+    writeFileSync(temporary, `${body}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    renameSync(temporary, this.path)
+  }
+}
+
+/**
+ * Sort server records by name for a stable stored order.
+ * @param left - first record.
+ * @param right - second record.
+ * @returns the comparator result.
+ */
+function byName(left, right) {
+  return left.serverName < right.serverName ? -1 : left.serverName > right.serverName ? 1 : 0
+}
+
+/** Mounts servers, masks per-session tools, and owns the store. */
+class ScopeRuntime {
+  /**
+   * @param ctx - plugin context carrying `tools`.
+   * @param store - the server store.
+   */
+  constructor(ctx, store) {
+    this.ctx = ctx
+    this.store = store
+    /** @type {Map<string, { fiber: unknown, signature: string }>} */
+    this.mounts = new Map()
+    /** @type {Map<string, () => void>} */
+    this.masks = new Map()
+    /** @type {Map<string, unknown>} */
+    this.agents = new Map()
+    /** @type {Map<string, string>} */
+    this.mountErrors = new Map()
+  }
+
+  /**
+   * Reconcile the mounted servers with the store, then re-mask every live agent.
+   *
+   * Serialized on one chain: remounting awaits the old fiber's disposal, so two
+   * concurrent reconciles could otherwise interleave an unmount with the mount
+   * that must follow it.
+   *
+   * @returns the reconcile outcome.
+   */
+  reconcile() {
+    const next = (this.pending ?? Promise.resolve()).then(() => this.#reconcileNow())
+    this.pending = next.then(() => {}, () => {})
+    return next
+  }
+
+  /** @returns the reconcile outcome. */
+  async #reconcileNow() {
+    const wanted = new Map()
+    for (const server of this.store.servers) {
+      wanted.set(server.serverName, server)
+    }
+    for (const [serverName, mount] of [...this.mounts]) {
+      const server = wanted.get(serverName)
+      const signature = server === undefined ? undefined : JSON.stringify(toClientConfig(server))
+      if (server !== undefined && mount.signature === signature) continue
+      // Awaiting matters: the official client reserves `serverName` per scope,
+      // so remounting before the old fiber released it makes the new apply fail
+      // with "already in use" — a failure `ctx.plugin` parks in the fiber
+      // instead of throwing here.
+      await this.#unmount(serverName)
+    }
+    for (const [serverName, server] of wanted) {
+      if (this.mounts.has(serverName)) continue
+      if (!server.enabled) continue
+      this.#mount(server)
+    }
+    this.maskAll()
+  }
+
+  /**
+   * Mount one server on the root context.
+   * @param server - validated server record.
+   */
+  #mount(server) {
+    const config = toClientConfig(server)
+    try {
+      const fiber = this.ctx.plugin(mcpClient, config)
+      this.mounts.set(server.serverName, { fiber, signature: JSON.stringify(config) })
+      this.mountErrors.delete(server.serverName)
+      // `ctx.plugin` does not throw when the plugin refuses to apply: it parks
+      // the rejection in the fiber. Without observing it a server that never
+      // starts still reads as connected on the page — with zero tools and no
+      // reason shown — and its signature matches, so no later reconcile
+      // retries it.
+      Promise.resolve(fiber).then(
+        () => {},
+        (error) => {
+          if (this.mounts.get(server.serverName)?.fiber !== fiber) return
+          const message = error instanceof Error ? error.message : String(error)
+          this.mountErrors.set(server.serverName, message)
+          this.ctx.logger?.warn?.(`mcp-scope: "${server.serverName}" failed to apply: ${message}`)
+        },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.mountErrors.set(server.serverName, message)
+      this.ctx.logger?.warn?.(`mcp-scope: "${server.serverName}" failed to mount: ${message}`)
+    }
+  }
+
+  /**
+   * Dispose one mounted server.
+   *
+   * Awaited by the caller: disposal releases the `serverName` reservation the
+   * official client holds per scope, and only after it settles can the same
+   * name mount again.
+   *
+   * @param serverName - the server to unmount.
+   * @returns a promise settling after disposal.
+   */
+  async #unmount(serverName) {
+    const mount = this.mounts.get(serverName)
+    if (mount === undefined) return
+    this.mounts.delete(serverName)
+    try {
+      await mount.fiber?.dispose?.()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger?.warn?.(`mcp-scope: "${serverName}" failed to unmount: ${message}`)
+    }
+  }
+
+  /**
+   * Record one live agent and mask its out-of-scope tools.
+   * @param agent - the created agent.
+   */
+  addAgent(agent) {
+    this.agents.set(agent.id, { agent, cwd: '', visible: [], denied: [] })
+    this.#mask(agent)
+  }
+
+  /**
+   * Forget one agent and lift its mask.
+   * @param agent - the disposed agent.
+   */
+  removeAgent(agent) {
+    this.agents.delete(agent.id)
+    const mask = this.masks.get(agent.id)
+    if (mask === undefined) return
+    this.masks.delete(agent.id)
+    try {
+      mask.lift()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger?.warn?.(`mcp-scope: agent ${agent.id} mask release failed: ${message}`)
+    }
+  }
+
+  /** Re-mask every live agent after a store or mount change. */
+  maskAll() {
+    for (const record of this.agents.values()) this.#mask(record.agent)
+  }
+
+  /**
+   * How many live sessions currently see each mounted server.
+   * @returns server name to the number of sessions whose mask admits it.
+   */
+  visibleSessionCounts() {
+    const counts = new Map()
+    for (const record of this.agents.values()) {
+      for (const serverName of record.visible) {
+        counts.set(serverName, (counts.get(serverName) ?? 0) + 1)
+      }
+    }
+    return counts
+  }
+
+  /**
+   * Apply this agent's scope mask.
+   * @param agent - the agent to mask.
+   */
+  #mask(agent) {
+    const record = this.agents.get(agent.id)
+    const deny = []
+    const visible = []
+    try {
+      const cwd = typeof agent.session?.header?.cwd === 'string' ? canonical(agent.session.header.cwd) : ''
+      if (record !== undefined) record.cwd = cwd
+      for (const server of this.store.servers) {
+        if (!this.mounts.has(server.serverName)) continue
+        if (server.scope === GLOBAL_SCOPE || inScope(cwd, server.scope)) {
+          visible.push(server.serverName)
+          continue
+        }
+        deny.push(...this.toolNames(server.serverName))
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger?.warn?.(`mcp-scope: agent ${agent.id} scope resolution failed: ${message}`)
+      return
+    }
+    if (record !== undefined) {
+      record.visible = visible
+      record.denied = deny
+    }
+    const previous = this.masks.get(agent.id)
+    if (previous !== undefined && previous.deny.length === deny.length
+      && previous.deny.every(name => deny.includes(name))) {
+      // A re-sweep that computes the same mask (a tool registered under an
+      // unrelated server, a workspace event) must not churn the restriction.
+      return
+    }
+    // Apply the new restriction BEFORE lifting the old one. `restrict` throws
+    // on a name that is not registered — precisely the state a server is in
+    // while it is still connecting — and lifting first would leave the agent
+    // unmasked, exposing exactly the tools this method exists to hide.
+    let next
+    if (deny.length > 0) {
+      try {
+        next = agent.ctx.tools.restrict({ deny })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.ctx.logger?.warn?.(`mcp-scope: agent ${agent.id} mask not applied yet: ${message}`)
+      }
+    }
+    if (previous !== undefined) {
+      this.masks.delete(agent.id)
+      try {
+        previous.lift()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.ctx.logger?.warn?.(`mcp-scope: agent ${agent.id} mask replace failed: ${message}`)
+      }
+    }
+    if (next !== undefined) this.masks.set(agent.id, { lift: next, deny })
+  }
+
+  /**
+   * Registered tool names owned by one MCP server.
+   * @param serverName - the server whose tools to list.
+   * @returns the tool names registered under that server's namespace.
+   */
+  toolNames(serverName) {
+    const prefix = `${TOOL_PREFIX}${serverName}__`
+    const names = []
+    for (const schema of this.ctx.tools.schemas()) {
+      const toolName = schema?.name
+      if (typeof toolName === 'string' && toolName.startsWith(prefix)) names.push(toolName)
+    }
+    return names
+  }
+
+  /**
+   * Servers one agent may use, in stable name order.
+   * @param agent - the agent whose scope to resolve.
+   * @returns the stored server records inside that agent's scope.
+   */
+  visibleServers(agent) {
+    const cwd = this.agents.get(agent?.id)?.cwd ?? ''
+    return this.store.servers.filter(server =>
+      this.mounts.has(server.serverName)
+      && (server.scope === GLOBAL_SCOPE || inScope(cwd, server.scope)))
+  }
+
+  /**
+   * Look one stored server up by name.
+   * @param serverName - the server name.
+   * @returns the record, or undefined.
+   */
+  serverByName(serverName) {
+    return this.store.servers.find(server => server.serverName === serverName)
+  }
+
+  /**
+   * Whether one agent may use one server.
+   * @param agent - the agent whose scope to resolve.
+   * @param serverName - the server name.
+   * @returns true when the server is mounted and inside that agent's scope.
+   */
+  admits(agent, serverName) {
+    return this.visibleServers(agent).some(server => server.serverName === serverName)
+  }
+
+  /**
+   * One line per live session, for the page's scope diagnostics.
+   *
+   * The session id is withheld: the page never needs it (it reads its own
+   * current session locally for approval routing), and publishing it would
+   * hand any reader of this endpoint a handle on every live session.
+   *
+   * @returns resolved cwd and the servers each live session's mask admits.
+   */
+  sessionSummaries() {
+    return [...this.agents.values()].map(record => ({
+      cwd: record.cwd,
+      visible: [...record.visible],
+      denied: [...record.denied],
+    }))
+  }
+
+  /** Drop every mount and mask. */
+  dispose() {
+    for (const agentId of [...this.masks.keys()]) {
+      const mask = this.masks.get(agentId)
+      this.masks.delete(agentId)
+      try {
+        mask?.lift()
+      } catch {
+        // Disposal runs while the tree collapses; a failing lift is already inert.
+      }
+    }
+    for (const serverName of [...this.mounts.keys()]) this.#unmount(serverName)
+    this.agents.clear()
+  }
+}
+
+/**
+ * Read one request body with a size cap.
+ * @param req - the incoming request.
+ * @returns the parsed JSON body.
+ */
+async function readJson(req) {
+  const chunks = []
+  let total = 0
+  for await (const chunk of req) {
+    total += chunk.length
+    if (total > MAX_BODY_BYTES) throw new Error('request body too large')
+    chunks.push(chunk)
+  }
+  if (total === 0) return {}
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+/**
+ * Reject a request the composition's trust fence refuses.
+ *
+ * Security has one home: the `connection` service's `requestRejection` applies
+ * DSH's own Host/Origin/Fetch-Metadata fence — which is what defeats DNS
+ * rebinding — plus its browser login-token authentication. A route registered
+ * through `ctx.webServer.register` receives neither automatically; only the
+ * RPC bridge does. Every request therefore asks for the rejection first,
+ * exactly as `@deepseek-ai/dsh-open-in-app` does.
+ *
+ * Without that fence this API is reachable by any page whose hostname
+ * re-resolves to 127.0.0.1, and such a page can create a stdio server, which
+ * executes a command. A missing service is therefore a refusal, never a pass.
+ *
+ * The `x-dsh-mcp-scope` header stays as a second, cheaper layer: a
+ * cross-origin page cannot set it without a preflight this server never
+ * grants.
+ *
+ * @param ctx - context carrying the optional `connection` service.
+ * @param req - the incoming request.
+ * @returns the HTTP status to answer with, or null when the request may proceed.
+ */
+function rejectionOf(ctx, req) {
+  let connection
+  try {
+    connection = ctx.get('connection')
+  } catch {
+    connection = undefined
+  }
+  if (connection === undefined || typeof connection.requestRejection !== 'function') return 403
+  const rejection = connection.requestRejection(req)
+  if (rejection !== undefined) return rejection
+  return req.headers[GUARD_HEADER] === '1' ? null : 403
+}
+
+/**
+ * Send one JSON response.
+ * @param res - the response to write.
+ * @param status - HTTP status code.
+ * @param body - JSON-serializable body.
+ */
+function sendJson(res, status, body) {
+  const payload = JSON.stringify(body)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+/** Usage line shown by `/mcp` for an unrecognized subcommand. */
+const MCP_USAGE = '用法：/mcp [list | tools <服务器> | health | probe <服务器>]'
+
+/** Deadline for one panel tool trial, in milliseconds. */
+const TRIAL_TIMEOUT_MS = 120000
+
+/** Cap on the trial result JSON, in characters. */
+const TRIAL_MAX_CHARS = 60000
+
+/** Correlation suffix counter for panel trials. */
+let trialCounter = 0
+
+/**
+ * Cap one trial result payload.
+ * @param value - the serialized payload.
+ * @returns the payload, truncated when oversize.
+ */
+function capTrial(value) {
+  return value.length > TRIAL_MAX_CHARS
+    ? `${value.slice(0, TRIAL_MAX_CHARS)}\n…[truncated at ${TRIAL_MAX_CHARS} characters]`
+    : value
+}
+
+/**
+ * Describe one server's scope for human output.
+ * @param server - the stored server record.
+ * @returns the scope label.
+ */
+function scopeLabel(server) {
+  return server.scope === GLOBAL_SCOPE ? '全局' : `工作区 ${server.scope}`
+}
+
+/**
+ * Probe one server and phrase the outcome for a person.
+ * @param server - the stored server record.
+ * @returns the multi-line report.
+ */
+async function probeReport(server) {
+  const outcome = await probeServer(server, DEFAULT_PROBE_TIMEOUT_MS)
+  if (outcome.status === 'completed') {
+    return `✅ ${server.serverName}：可达 — ${outcome.detail}（${outcome.elapsedMs}ms）`
+  }
+  return `❌ ${server.serverName}：不可达\n${diagnose(outcome.detail, server).zh}`
+}
+
+/**
+ * Build the `/mcp` command definition.
+ * @param runtime - the mount runtime that owns the servers.
+ * @returns the command registration.
+ */
+function mcpCommand(runtime) {
+  return {
+    definitionId: 'dsh-mcp-scope',
+    name: 'mcp',
+    description: '列出本会话可见的 MCP 服务器、它们的工具与可达性',
+    handler: async (invocation) => {
+      const agent = invocation.agent
+      const parts = String(invocation.rawInput ?? '').trim().split(/\s+/u).filter(part => part !== '')
+      const subcommand = parts[0] ?? 'list'
+      const servers = runtime.visibleServers(agent)
+      if (subcommand === 'list') {
+        if (servers.length === 0) {
+          return { kind: 'success', text: '本会话没有可见的 MCP 服务器。用「设置 → MCP 服务器」添加。' }
+        }
+        const lines = servers.map(server =>
+          `• ${server.serverName} — ${scopeLabel(server)}，${runtime.toolNames(server.serverName).length} 个工具`)
+        return { kind: 'success', text: `本会话可见的 MCP 服务器（${servers.length}）：\n${lines.join('\n')}` }
+      }
+      if (subcommand === 'tools') {
+        const server = servers.find(candidate => candidate.serverName === parts[1])
+        if (server === undefined) {
+          return { kind: 'error', text: `本会话没有可见的服务器「${parts[1] ?? ''}」。先运行 /mcp 看列表。` }
+        }
+        const names = runtime.toolNames(server.serverName)
+        return {
+          kind: 'success',
+          text: names.length === 0
+            ? `「${server.serverName}」当前没有注册任何工具。`
+            : `「${server.serverName}」的 ${names.length} 个工具：\n${names.map(name => `• ${name}`).join('\n')}`,
+        }
+      }
+      if (subcommand === 'health') {
+        if (servers.length === 0) return { kind: 'success', text: '本会话没有可见的 MCP 服务器。' }
+        const reports = await Promise.all(servers.map(server => probeReport(server)))
+        return { kind: 'success', text: reports.join('\n\n') }
+      }
+      if (subcommand === 'probe') {
+        const server = servers.find(candidate => candidate.serverName === parts[1])
+        if (server === undefined) {
+          return { kind: 'error', text: `本会话没有可见的服务器「${parts[1] ?? ''}」。先运行 /mcp 看列表。` }
+        }
+        return { kind: 'success', text: await probeReport(server) }
+      }
+      return { kind: 'error', text: MCP_USAGE }
+    },
+  }
+}
+
+/**
+ * Build the `mcp_probe` model-facing tool.
+ * @param runtime - the mount runtime that owns the servers.
+ * @returns the tool definition.
+ */
+function mcpProbeTool(runtime) {
+  return defineTool({
+    name: 'mcp_probe',
+    description: [
+      'Probe one configured MCP server for reachability by completing a real MCP initialize handshake,',
+      'and return the observed result plus a diagnosis when it fails.',
+      'Use it when an MCP tool call fails, when a server seems missing, or before relying on a server.',
+      'It only reaches servers visible to this session; a server outside this session scope is refused.',
+    ].join(' '),
+    parameters: {
+      serverName: {
+        type: 'string',
+        required: true,
+        description: 'The MCP server name to probe, as shown by the /mcp command.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          serverName: { type: 'string', required: true, description: 'The probed server name.' },
+          reachable: { type: 'boolean', required: true, description: 'Whether the handshake completed.' },
+          detail: { type: 'string', required: true, description: 'Observed result, or the failure and its repair.' },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.detail }],
+    },
+    async execute(args, exec) {
+      const server = runtime.serverByName(args.serverName)
+      if (server === undefined) throw new Error(`unknown MCP server "${args.serverName}"`)
+      if (!runtime.admits(exec.agent, args.serverName)) {
+        throw new Error(`MCP server "${args.serverName}" is outside this session's scope`)
+      }
+      const outcome = await probeServer(server, DEFAULT_PROBE_TIMEOUT_MS)
+      const reachable = outcome.status === 'completed'
+      const detail = reachable
+        ? `${args.serverName}: reachable — ${outcome.detail} (${outcome.elapsedMs}ms)`
+        : `${args.serverName}: unreachable\n${diagnose(outcome.detail, server).en}`
+      return { serverName: args.serverName, reachable, detail }
+    },
+  })
+}
+
+/**
+ * Mount the Settings API and the per-session scope mask.
+ * @param ctx - context carrying `tools`.
+ * @param config - raw plugin config.
+ */
+export async function apply(ctx, config) {
+  const store = new ServerStore(storePathOf(config))
+  store.load()
+  const runtime = new ScopeRuntime(ctx, store)
+  ctx.effect(() => () => runtime.dispose(), 'mcp-scope: runtime')
+
+  ctx.on('agent/created', (payload) => { runtime.addAgent(payload.agent) })
+  ctx.on('agent/disposed', (payload) => { runtime.removeAgent(payload.agent) })
+
+  // A server's tools appear only after its handshake, which finishes long after
+  // `ctx.plugin` returned — so an agent created while a server was still
+  // connecting holds an incomplete deny list, and an agent created while a
+  // server was down holds none at all. `tools/change` fires on every register
+  // and unregister, so the sweep runs then. It re-enters: `restrict` goes
+  // through the same layer notifier, so the flag makes the nested call a
+  // no-op instead of recursing.
+  let sweeping = false
+  ctx.on('tools/change', () => {
+    if (sweeping) return
+    sweeping = true
+    try {
+      runtime.maskAll()
+    } finally {
+      sweeping = false
+    }
+  })
+
+  await runtime.reconcile()
+
+  // `agent/created` only covers agents born after this plugin applied. On an
+  // HMR reload the previous instance lifted every mask on its way out, so the
+  // sessions that were already live would stay unmasked for the rest of their
+  // lives unless they are adopted here.
+  const agents = ctx.get('agents')
+  if (typeof agents?.list === 'function') {
+    for (const agent of agents.list()) runtime.addAgent(agent)
+  }
+
+  // The `/mcp` command exists only where a human-command registry is composed.
+  ctx.inject(['commands'], (scope) => {
+    scope.effect(() => scope.commands.register(mcpCommand(runtime)), 'mcp-scope: /mcp command')
+  })
+
+  // The probe tool is registered globally; its body refuses any server outside
+  // the calling agent's scope, so it cannot become a scope bypass.
+  ctx.effect(() => ctx.tools.register(mcpProbeTool(runtime)), 'mcp-scope: probe tool')
+
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() => scope.webServer.register({
+      kind: 'prefix',
+      path: '/mcp-scope',
+      handler: async (req, res) => {
+        const rejection = rejectionOf(ctx, req)
+        if (rejection !== null) {
+          sendJson(res, rejection, { ok: false, error: 'refused by the deployment trust fence' })
+          return
+        }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const route = url.pathname.slice('/mcp-scope'.length)
+        try {
+          if (req.method === 'GET' && route === '/api/state') {
+            const counts = runtime.visibleSessionCounts()
+            sendJson(res, 200, {
+              ok: true,
+              storePath: store.path,
+              loadError: store.loadError ?? null,
+              servers: store.servers.map(server => ({
+                ...redactSecrets(server),
+                mounted: runtime.mounts.has(server.serverName),
+                mountError: runtime.mountErrors.get(server.serverName) ?? null,
+                sessions: counts.get(server.serverName) ?? 0,
+                tools: runtime.toolNames(server.serverName),
+              })),
+              liveSessions: runtime.sessionSummaries(),
+              probeTool: ctx.tools.schemas().some(schema => schema?.name === 'mcp_probe'),
+              workspaces: workspaceList(scope),
+            })
+            return
+          }
+          if (req.method === 'POST' && route === '/api/servers/probe') {
+            const body = await readJson(req)
+            const server = runtime.serverByName(String(body?.serverName ?? ''))
+            if (server === undefined) throw new Error(`unknown MCP server "${body?.serverName ?? ''}"`)
+            const outcome = await probeServer(server, DEFAULT_PROBE_TIMEOUT_MS)
+            const reachable = outcome.status === 'completed'
+            sendJson(res, 200, {
+              ok: true,
+              serverName: server.serverName,
+              reachable,
+              detail: sanitizeText(outcome.detail),
+              elapsedMs: outcome.elapsedMs,
+              diagnosis: reachable ? null : diagnose(outcome.detail, server),
+            })
+            return
+          }
+          if (req.method === 'POST' && route === '/api/servers/call') {
+            sendJson(res, 200, await callTool(ctx, runtime, await readJson(req)))
+            return
+          }
+          if (req.method === 'POST' && route.startsWith('/api/servers/')) {
+            const action = route.slice('/api/servers/'.length)
+            const body = await readJson(req)
+            sendJson(res, 200, await mutate(action, body, store, runtime))
+            return
+          }
+          sendJson(res, 404, { ok: false, error: 'not found' })
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }), 'mcp-scope: settings api')
+  })
+}
+
+/**
+ * Read the registered workspaces for the scope picker.
+ * @param scope - a context carrying the optional workspace registry.
+ * @returns workspace descriptors, or an empty list when unreregd.
+ */
+function workspaceList(scope) {
+  try {
+    const registry = scope.get('workspaceRegistry')
+    if (registry === undefined || typeof registry.list !== 'function') return []
+    return registry.list().map(workspace => ({
+      id: workspace.id,
+      path: workspace.path,
+      title: typeof workspace.title === 'string' && workspace.title !== '' ? workspace.title : workspace.path,
+    }))
+  } catch {
+    // A missing or half-initialized registry only costs the picker its options.
+    return []
+  }
+}
+
+/**
+ * Run one registered MCP tool through the official execution pipeline.
+ *
+ * `ctx.tools.execute` applies pre-execute permission policy, approval asks,
+ * guards, around-dispatch, and post-execute exactly as for a model call, so the
+ * console is another caller of that pipeline rather than a way around it. When
+ * the page forwards its session id, the live agent authorizes an approval ask
+ * through the ordinary web channel; without one, a tool that needs approval
+ * fails closed with the registry's own denial text.
+ *
+ * @param ctx - plugin context carrying `tools`.
+ * @param runtime - the mount runtime that owns the servers.
+ * @param body - `{ serverName, toolName, argumentsJson, sessionId }`.
+ * @returns the capped trial result.
+ */
+async function callTool(ctx, runtime, body) {
+  const serverName = String(body?.serverName ?? '')
+  const toolName = String(body?.toolName ?? '')
+  const server = runtime.serverByName(serverName)
+  if (server === undefined) throw new Error(`unknown MCP server "${serverName}"`)
+  if (!runtime.toolNames(serverName).includes(toolName)) {
+    throw new Error(`tool "${toolName}" is not registered by "${serverName}" — the server may be down or still connecting`)
+  }
+  let args
+  try {
+    args = typeof body?.argumentsJson === 'string' && body.argumentsJson.trim() !== ''
+      ? JSON.parse(body.argumentsJson)
+      : {}
+  } catch (error) {
+    throw new Error(`argumentsJson is not valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const agents = ctx.get('agents')
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+  const agent = sessionId === '' ? undefined : agents?.get?.(sessionId)
+  // Scope is enforced here for the same reason the mask exists: without an
+  // agent, `ctx.tools.execute` resolves the name in the GLOBAL tool view, so an
+  // unguarded call would run an out-of-scope server's tool. `admits` treats a
+  // missing agent as "global scope only", exactly like `mcp_probe` and the
+  // mask's unknown-cwd case, so a global server still trials from a fresh page.
+  if (!runtime.admits(agent, serverName)) {
+    throw new Error(agent === undefined
+      ? `"${serverName}" is scoped to a workspace; open a session in that workspace to run its tools`
+      : `"${serverName}" is outside this session's scope`)
+  }
+  const started = Date.now()
+  const result = await ctx.tools.execute({
+    callId: `mcp-scope-trial-${++trialCounter}`,
+    name: toolName,
+    arguments: args,
+    ...(agent === undefined ? {} : { agent }),
+    signal: AbortSignal.timeout(TRIAL_TIMEOUT_MS),
+  })
+  return {
+    ok: true,
+    serverName,
+    toolName,
+    isError: result?.isError === true,
+    durationMs: Date.now() - started,
+    resultJson: capTrial(JSON.stringify(result ?? null, null, 2)),
+  }
+}
+
+/**
+ * Apply one store mutation and reconcile the runtime.
+ * @param action - create, update, toggle, or delete.
+ * @param body - the request body.
+ * @param store - the server store.
+ * @param runtime - the mount runtime.
+ * @returns the response body.
+ */
+async function mutate(action, body, store, runtime) {
+  const serverName = String(body?.serverName ?? '').trim()
+  if (action === 'create') {
+    const server = validateServer(body.server)
+    if (store.servers.some(row => row.serverName === server.serverName)) {
+      throw new Error(`a server named "${server.serverName}" already exists`)
+    }
+    store.servers = [...store.servers, server]
+  } else if (action === 'update') {
+    const index = store.servers.findIndex(row => row.serverName === serverName)
+    if (index < 0) throw new Error(`unknown server "${serverName}"`)
+    const stored = store.servers[index]
+    // Merge over the stored record. The page withholds credential values and
+    // may omit a field entirely, and taking an absent field as its default
+    // would silently erase what the person never touched.
+    const submitted = { ...(body.server ?? {}), serverName: stored.serverName }
+    if (submitted.env !== undefined) submitted.env = mergeSecrets(submitted.env, stored.env)
+    if (submitted.headers !== undefined) submitted.headers = mergeSecrets(submitted.headers, stored.headers)
+    const server = validateServer({ ...stored, ...submitted })
+    store.servers = store.servers.map((row, at) => (at === index ? server : row))
+  } else if (action === 'toggle') {
+    const index = store.servers.findIndex(row => row.serverName === serverName)
+    if (index < 0) throw new Error(`unknown server "${serverName}"`)
+    const enabled = body?.enabled === true
+    store.servers = store.servers.map((row, at) => (at === index ? { ...row, enabled } : row))
+  } else if (action === 'delete') {
+    if (!store.servers.some(row => row.serverName === serverName)) {
+      throw new Error(`unknown server "${serverName}"`)
+    }
+    store.servers = store.servers.filter(row => row.serverName !== serverName)
+  } else {
+    throw new Error(`unknown action "${action}"`)
+  }
+  store.save()
+  store.loadError = undefined
+  await runtime.reconcile()
+  return { ok: true, servers: store.servers }
+}

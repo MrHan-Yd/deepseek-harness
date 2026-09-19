@@ -34,6 +34,12 @@ export async function runCli(): Promise<void> {
   switch (invocation.mode) {
     case 'profile': {
       const { runProfile } = await import('./profile-boot.ts')
+      // A source launch runs this file as TypeScript through tsx, whose ESM hook
+      // projects the repository tsconfig `paths` onto workspace imports. Plugin rows
+      // must resolve in that same source plane: runtime resolution mixes built `lib/`
+      // rows into the source graph, instantiating shared packages twice and failing
+      // every tool call. Built bins keep the runtime default.
+      const resolutionMode = import.meta.url.endsWith('.ts') ? 'link' as const : undefined
       try {
         await runProfile({
           environment: loadLayeredEnv('dsh'),
@@ -41,6 +47,7 @@ export async function runCli(): Promise<void> {
           fromDefaultProfile: invocation.fromDefaultProfile,
           patchFiles: invocation.patches,
           args: invocation.args,
+          ...(resolutionMode === undefined ? {} : { resolutionMode }),
         })
       } catch (error) {
         if (!(error instanceof StartupError)) throw error

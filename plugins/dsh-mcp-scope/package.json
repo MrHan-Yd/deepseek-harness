@@ -1,0 +1,31 @@
+{
+  "name": "dsh-mcp-scope",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workspace-scoped MCP server management for DeepSeek Harness: a Settings page that creates MCP servers at global scope or scoped to one workspace, and hides out-of-scope MCP tools from each session.",
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
