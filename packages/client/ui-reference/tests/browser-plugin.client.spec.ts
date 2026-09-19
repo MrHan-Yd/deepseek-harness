@@ -1,7 +1,8 @@
 /**
- * Web reference source coverage: Remote-backed file/session discovery,
- * deterministic ordering and labels, quoted-path suppression, pick projections, codec
- * round-trip, and registration lifecycle.
+ * Web reference source coverage: Remote-backed file/session discovery for the
+ * `@` source, session-only discovery and workspace ordering for the `#`
+ * source, deterministic labels, quoted-path suppression, pick projections,
+ * codec round-trip, and registration lifecycle.
  */
 import { Context, Service } from '@deepseek-ai/cordis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -80,14 +81,19 @@ async function bench(
     parentId?: SessionId
     projectionValues?: { title?: string | null }
   }> = {},
-): Promise<{ ctx: Context; fiber: ReturnType<Context['plugin']>; source: InputTriggerSource }> {
+): Promise<{
+  ctx: Context
+  fiber: ReturnType<Context['plugin']>
+  source: InputTriggerSource
+  sessionSource: InputTriggerSource
+}> {
   const ctx = new Context()
   ctx.provide('sidebarRight', { openResource: vi.fn() })
-  let source: InputTriggerSource | undefined
+  const sources = new Map<string, InputTriggerSource>()
   ctx.provide('inputTriggers', {
     registerSource(candidate: InputTriggerSource) {
-      source = candidate
-      return () => { source = undefined }
+      sources.set(candidate.trigger, candidate)
+      return () => { sources.delete(candidate.trigger) }
     },
   })
   class RemoteService extends Service {
@@ -104,24 +110,26 @@ async function bench(
   ctx.provide('sessions', { list: { getSnapshot: () => ({ byId: listed }) } })
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
-  if (source === undefined) throw new Error('reference source was not registered')
-  return { ctx, fiber, source }
+  const source = sources.get('@')
+  const sessionSource = sources.get('#')
+  if (source === undefined || sessionSource === undefined) throw new Error('reference sources were not registered')
+  return { ctx, fiber, source, sessionSource }
 }
 
 describe('apply', () => {
-  it('declares its services and releases the @ reference registration on disposal', async () => {
+  it('declares its services and releases both reference registrations on disposal', async () => {
     expect(inject).toEqual([
       'inputTriggers', 'locale', 'sessions', 'remote', 'remote.fileReferences',
       'remote.sessionReferenceResolver', 'sidebarRight',
     ])
     const { fiber } = await bench()
-    let registered: InputTriggerSource | undefined
+    const registered = new Map<string, InputTriggerSource>()
     const ctx = new Context()
     ctx.provide('sidebarRight', { openResource: vi.fn() })
     ctx.provide('inputTriggers', {
       registerSource(source: InputTriggerSource) {
-        registered = source
-        return () => { registered = undefined }
+        registered.set(source.trigger, source)
+        return () => { registered.delete(source.trigger) }
       },
     })
     class RemoteService extends Service {
@@ -138,9 +146,10 @@ describe('apply', () => {
     ctx.provide('sessions', { list: { getSnapshot: () => ({ byId: {} }) } })
     const ownFiber = ctx.plugin({ inject: [...inject], apply })
     await ownFiber.await()
-    expect(registered).toMatchObject({ trigger: '@', name: 'reference', showGroupTitle: false })
+    expect(registered.get('@')).toMatchObject({ trigger: '@', name: 'reference', showGroupTitle: false })
+    expect(registered.get('#')).toMatchObject({ trigger: '#', name: 'session', showGroupTitle: false })
     await ownFiber.dispose()
-    expect(registered).toBeUndefined()
+    expect(registered.size).toBe(0)
     await fiber.dispose()
   })
 
@@ -428,6 +437,123 @@ describe('candidates', () => {
     await expect(source.candidates(session, request('sib'))).resolves.toEqual([
       expect.objectContaining({ name: 'Sibling run', description: '3d' }),
     ])
+  })
+})
+
+describe('session-only # source', () => {
+  /** Host rank order is remote, worker, local, nowhere; only `local` is the requesting workspace. */
+  const mixed = () => vi.fn(() => Promise.resolve({
+    ok: true as const,
+    value: [
+      {
+        sessionId: sid('remote'),
+        label: 'Remote run',
+        cwd: `${HOME}/elsewhere`,
+        sameWorkspace: false,
+        createdAt: CREATED_AT,
+        mention: '@[Remote run](dsh-session:InJlbW90ZSI)',
+      },
+      {
+        sessionId: sid('worker'),
+        label: 'Investigate startup',
+        displayTitle: 'code-reviewer',
+        cwd: `${HOME}/project`,
+        sameWorkspace: true,
+        createdAt: CREATED_AT,
+        mention: '@[code-reviewer](dsh-session:IndvcmtlciI)',
+      },
+      {
+        sessionId: sid('local'),
+        label: 'Local run',
+        displayTitle: 'researcher',
+        cwd: `${HOME}/project`,
+        sameWorkspace: true,
+        createdAt: CREATED_AT,
+        mention: '@[researcher](dsh-session:ImxvY2FsIg)',
+      },
+      {
+        sessionId: sid('nowhere'),
+        label: 'Nowhere run',
+        sameWorkspace: false,
+        createdAt: CREATED_AT,
+        mention: '@[Nowhere run](dsh-session:Im5vd2hlcmUi)',
+      },
+    ],
+  }))
+
+  it('scans sessions only, drops subagents, and lifts the current workspace above every other one', async () => {
+    const files = vi.fn()
+    const { source, sessionSource } = await bench(files, mixed(), {
+      local: { updatedAt: UPDATED_AT },
+      remote: { updatedAt: UPDATED_AT },
+      // A subagent of this very Session: `@` groups it, `#` must not list it.
+      worker: { updatedAt: UPDATED_AT, origin: 'subagent', parentId: session.sessionId },
+    })
+    const rows = await sessionSource.candidates(session, request(''))
+    expect(files).not.toHaveBeenCalled()
+    expect(rows.map(row => ({ name: row.name, section: row.section }))).toEqual([
+      { name: 'researcher', section: 'Current workspace' },
+      { name: 'Remote run', section: 'Other workspaces' },
+      { name: 'Nowhere run', section: 'Other workspaces' },
+    ])
+    // Only the requesting workspace's row may drop its location.
+    expect(rows.map(row => row.description)).toEqual(['1h', '~/elsewhere · 1h', '(no cwd) · 3d'])
+    expect(source.trigger).toBe('@')
+  })
+
+  it('drops only candidates the Session list reports as subagents', async () => {
+    // No list rows at all: nothing is known to be a subagent, so nothing drops.
+    const { sessionSource } = await bench(vi.fn(), mixed())
+    const rows = await sessionSource.candidates(session, request(''))
+    expect(rows.map(row => row.name)).toEqual(['code-reviewer', 'researcher', 'Remote run', 'Nowhere run'])
+  })
+
+  it('inserts a session chip the # source owns, with a mention that round-trips through its codec', async () => {
+    const mention = '@[researcher](dsh-session:ImxvY2FsIg)'
+    const { sessionSource } = await bench(vi.fn(), mixed())
+    const rows = await sessionSource.candidates(session, request('researcher'))
+    const candidate = rows.find(row => row.name === 'researcher')!
+    expect(sessionSource.onPick({
+      candidate,
+      session,
+      position: 'inline',
+      via: 'menu',
+      action: 'pick',
+      span: { start: 0, end: 11, draftRev: 1 },
+    })).toEqual({
+      insert: { source: 'session', ref: mention, label: 'researcher', appearance: 'session', clipboardText: mention },
+    })
+    expect(sessionSource.codec?.clipboardText(mention)).toBe(mention)
+    await expect(sessionSource.codec?.serialize(mention, new AbortController().signal)).resolves.toBe(mention)
+  })
+
+  it('reports no rows when the session lookup fails', async () => {
+    const sessions = vi.fn(() => Promise.resolve({
+      ok: false as const,
+      error: new RemoteError('gateway/internal', 'session lookup failed', {}),
+    }))
+    const { sessionSource } = await bench(vi.fn(), sessions)
+    await expect(sessionSource.candidates(session, request(''))).resolves.toEqual([])
+  })
+
+  it('drops a completed result when the query signal was superseded', async () => {
+    const { sessionSource } = await bench(vi.fn(), mixed())
+    const controller = new AbortController()
+    const pending = sessionSource.candidates(session, request('', { signal: controller.signal }))
+    controller.abort()
+    await expect(pending).resolves.toEqual([])
+  })
+
+  it('ignores candidates that are not session rows', async () => {
+    const { sessionSource } = await bench(vi.fn(), mixed())
+    const pick = (candidate: InputTriggerCandidate) => sessionSource.onPick({
+      candidate, session, position: 'inline', via: 'menu', action: 'pick', span: { start: 0, end: 1, draftRev: 1 },
+    })
+    expect(pick({ name: 'foreign candidate' })).toBeUndefined()
+    expect(pick({
+      name: 'src/',
+      value: JSON.stringify({ kind: 'file', fileKind: 'directory', label: 'src', mention: '@src/' }),
+    })).toBeUndefined()
   })
 })
 

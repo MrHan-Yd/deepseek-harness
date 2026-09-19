@@ -1,6 +1,7 @@
 // Web e2e scenario: the shipped composition discovers local files and cold
 // sessions through the real Host, groups both domains in the shared @ menu,
-// and projects each pick as a complete inline range without issuing a model call.
+// lists sessions alone in the # menu under their workspace tier, and projects
+// each pick as a complete inline range without issuing a model call.
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -385,6 +386,37 @@ describe.skipIf(MODE === 'record')('web e2e: file and session references through
     await expect.poll(() => crumbs.count()).toBe(0)
     await menu.getByRole('option', { name: /^folderx\// }).waitFor()
     await page.keyboard.press('Escape')
+
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  })
+
+  it('lists sessions alone under the current workspace for the # source', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-reference-hash'))
+    const input = page.locator('[data-composer-input]').first()
+    const menu = page.getByRole('listbox', { name: 'Trigger suggestions' })
+
+    await replaceReferenceQuery(page, input, '#')
+    // Every fixture session lives in the connected workspace, so the menu has
+    // one tier: the `#` source never renders an empty heading.
+    await expect.poll(() => menu.locator('[class*="sectionTitle"]').allTextContents(), { timeout: 15_000 })
+      .toEqual(['Current workspace'])
+    const text = await menu.innerText()
+    // Sessions alone: neither the file group nor the `@` source's own session
+    // heading appears, and the current workspace's rows drop their location.
+    expect(text).not.toContain('Files & folders')
+    expect(text).not.toContain('Sessions')
+    expect(text).toContain(SOURCE_SESSION_ID)
+    expect(text).not.toContain('(no cwd)')
+
+    // A `#` pick is the same atomic session capsule an `@` pick lands.
+    const row = menu.getByRole('option', { name: new RegExp(SOURCE_SESSION_ID) })
+    await expect.poll(() => row.count(), { timeout: 15_000 }).toBe(1)
+    await row.click()
+    const chip = page.locator('[data-composer-chip]').last()
+    await expect.poll(() => chip.textContent()).toBe(SOURCE_SESSION_ID)
+    await expect.poll(() => chip.locator('svg').count()).toBe(1)
+    await expect.poll(() => input.textContent()).toBe(`${SOURCE_SESSION_ID} `)
 
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])

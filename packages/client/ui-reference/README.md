@@ -1,5 +1,5 @@
 ---
-description: "Web @file and @session reference source for the composer: candidates, ordering, and atomic inline references (unified file/session picking)."
+description: "Web @file, @session, and #session reference sources for the composer: candidates, ordering, and atomic inline references."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use `dsh-client-ui-reference` when Web users need to mention files, folders, or sessions from one `@` completion menu. It lists files before sessions and keeps either group available when the other cannot load. Picking a file, folder, or session inserts an atomic reference with a stable clipboard form; folder rows also let users descend without closing completion. File rows omit redundant root locations, and session rows show a workspace only when it differs from the current one. Session mentions are validated before model context is captured, while browsing candidates has no model effect.
+Use `dsh-client-ui-reference` when Web users need to mention files, folders, or sessions from one `@` completion menu, or main sessions alone from the `#` menu. It lists files before sessions and keeps either group available when the other cannot load; `#` drops subagents the way the Workspace tree does, then ranks the current workspace's sessions first and every other workspace last. Picking a file, folder, or session inserts an atomic reference with a stable clipboard form; folder rows also let users descend without closing completion. File rows omit redundant root locations, and session rows show a workspace only when it differs from the current one. Session mentions are validated before model context is captured, while browsing candidates has no model effect.
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ Use `dsh-client-ui-reference` when Web users need to mention files, folders, or 
 <a id="use-this-package"></a>
 ## Use this package
 
-The source is active whenever the composition mounts this package and a Host `ctx.fileReferences` provider is available. Type `@` followed by an unquoted token to see files first, then sessions; open `@"…` to search files only. The candidate list is a completion menu, not a search result page: pick once and keep typing.
+The sources are active whenever the composition mounts this package and a Host `ctx.fileReferences` provider is available. Type `@` followed by an unquoted token to see files first, then sessions; open `@"…` to search files only. Type `#` to search main sessions alone, current workspace first. The candidate list is a completion menu, not a search result page: pick once and keep typing.
 
 ### What a pick inserts
 
@@ -52,6 +52,8 @@ The source keeps candidate encoding internal to the registration effect: the `/c
 ### Candidate flow
 
 For an unquoted token, the browser starts the `fileReferences/list` and `sessionReferenceResolver/candidates` Remote calls together, then deterministically orders files, direct subagents of the current Session, and other Sessions. Rows use the resolver's display title, which prefers a subagent's creation label while ordinary Sessions retain their projected title, and render under locale-owned group headings without a redundant raw `reference` source title. A session row is dated from the Host session list's `updatedAt` through the same relative-time bucket that list uses, so one session reads the same age on both surfaces; a session the list does not carry falls back to the candidate's creation time. A drilled query publishes a breadcrumb from the workspace root to the current directory; each crumb carries the drill payload a folder row would, so returning to a step and descending into one are one outcome.
+
+A `#` token runs the session lookup alone and never lists files. It keeps the rows the Workspace tree roots — a Session the list reports as a subagent drops out, because `@` already reaches this Session's own children through their parent — then partitions the resolver's workspace-affinity ranking, which already sorts the requesting workspace first, into the current workspace and every other one. The two groups render under locale-owned headings, and the ranking holds inside each group.
 
 ### Serialization
 
@@ -103,4 +105,4 @@ None.
 
 </details>
 
-**Runtime invariant:** No companion is published. A single slash-source registration whose disposal is proven by the HMR-safety spec — it emits no cordis events and owns no cross-plugin mutable state.
+**Runtime invariant:** No companion is published. Two slash-source registrations whose disposal is proven by the HMR-safety spec — they emit no cordis events and own no cross-plugin mutable state.

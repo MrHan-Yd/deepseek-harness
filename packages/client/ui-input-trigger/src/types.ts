@@ -9,15 +9,15 @@
  */
 import type { ComponentType } from 'react'
 import type {
-  PickOutcome, ReferenceInsert, TokenSpan,
+  InputTriggerChar, PickOutcome, ReferenceInsert, TokenSpan,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 export type {
   ArbitrateKey, ArbitrateOutcome, BeginCommandRequest, CommandClaim, ConsumeTokenRequest,
-  InsertReferenceRequest, InsertTextRequest, PickOutcome, ReferenceInsert, SubmitAttachment,
-  SubmitOutcome, TokenSpan,
+  InputTriggerChar, InsertReferenceRequest, InsertTextRequest, PickOutcome, ReferenceInsert,
+  SubmitAttachment, SubmitOutcome, TokenSpan,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 
 /**
@@ -30,8 +30,8 @@ export interface ClientSessionContext {
   readonly sessionId: SessionId
 }
 
-/** Trigger character a source binds to. */
-export type TriggerChar = '/' | '@'
+/** Trigger character a source binds to: `/` commands, `@` files and sessions, `#` sessions. */
+export type TriggerChar = InputTriggerChar
 
 /** Where the trigger token sits in the draft: leading (trimmed draft starts with it) or inline. */
 export type TriggerPosition = 'leading' | 'inline'
@@ -235,6 +235,6 @@ export interface InputTriggerSource {
 
 /** Trigger availability tier, derived from the input phase by the wiring layer. */
 export interface TriggerGuard {
-  /** plain: '/' and '@' live; claimed: '/' suppressed, '@' live; frozen: none. */
+  /** plain: '/', '@', and '#' live; claimed: '/' suppressed, '@' and '#' live; frozen: none. */
   readonly tier: 'plain' | 'claimed' | 'frozen'
 }

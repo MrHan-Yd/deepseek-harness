@@ -1,4 +1,4 @@
-/** `reference` namespace dictionaries for the unified `@` source. */
+/** `reference` namespace dictionaries for the `@` and `#` sources. */
 
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 
@@ -16,6 +16,8 @@ export const zh = {
   'section.files': '文件与文件夹',
   'section.subagents': '子智能体',
   'section.sessions': '对话',
+  'section.currentWorkspace': '当前工作区',
+  'section.otherWorkspaces': '其他工作区',
   'candidate.noCwd': '（无工作目录）',
   'crumb.root': '工作区',
   'time.now': '刚刚',
@@ -31,7 +33,7 @@ export type ReferenceKey = keyof typeof zh
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** The unified `@` reference menu's copy. */
+    /** The `@` and `#` reference menus' copy. */
     reference: ReferenceKey
   }
 }
@@ -41,6 +43,8 @@ export const en = {
   'section.files': 'Files & folders',
   'section.subagents': 'Subagents',
   'section.sessions': 'Sessions',
+  'section.currentWorkspace': 'Current workspace',
+  'section.otherWorkspaces': 'Other workspaces',
   'candidate.noCwd': '(no cwd)',
   'crumb.root': 'Workspace',
   'time.now': 'now',

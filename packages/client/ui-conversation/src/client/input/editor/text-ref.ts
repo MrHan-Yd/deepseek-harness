@@ -6,6 +6,7 @@ import { registerLexicalTextEntity } from '@lexical/text'
 import { mergeRegister } from '@lexical/utils'
 import { $getRoot } from 'lexical'
 import { scanTextRefs } from '../decorations.ts'
+import type { InputTriggerChar } from '../../contract/input.ts'
 import css from './composer-editor.module.css'
 
 /** JSON form of one text-ref node. */
@@ -82,7 +83,7 @@ export class TextRefNode extends TextNode {
  */
 export function registerTextRefDecoration(
   editor: LexicalEditor,
-  lexiconOf: () => ReadonlyMap<'/' | '@', readonly string[]>,
+  lexiconOf: () => ReadonlyMap<InputTriggerChar, readonly string[]>,
   activeToken: () => string | null,
 ): () => void {
   const getMatch = (text: string): { start: number; end: number } | null => {

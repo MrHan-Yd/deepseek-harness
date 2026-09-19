@@ -1,5 +1,5 @@
 ---
-description: "Input trigger pipeline for the Web GUI: / and @ detection under the caret, the grouped candidate menu, and pick routing to registered sources; for users and maintainers of slash commands and references."
+description: "Input trigger pipeline for the Web GUI: /, @, and # detection under the caret, the grouped candidate menu, and pick routing to registered sources; for users and maintainers of slash commands and references."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-When users type `/` or `@` at the caret in the Web GUI, this package opens a grouped menu for slash commands, file references, and session references. It supports keyboard and pointer selection, including drill-down choices and launchers that open a single candidate group over the current selection. A pick either invokes a command flow or inserts a reference for the consuming input surface to handle. The package affects browser presentation only; it does not assemble or send model requests.
+When users type `/`, `@`, or `#` at the caret in the Web GUI, this package opens a grouped menu for slash commands, file references, and session references. It supports keyboard and pointer selection, including drill-down choices and launchers that open a single candidate group over the current selection. A pick either invokes a command flow or inserts a reference for the consuming input surface to handle. The package affects browser presentation only; it does not assemble or send model requests.
 
 ## Table of Contents
 
@@ -53,7 +53,7 @@ A source may implement `openReference(session, reference)` to open a draft refer
 Read these pages when the trigger pipeline is not enough. They move from the pipeline to the sources that register into it and the shell that owns the input.
 
 - [ui-commands](../ui-commands/README.md) — registers the `/` command source into this pipeline and owns the command popup shell.
-- [ui-reference](../ui-reference/README.md) — registers the `@` file and session reference sources.
+- [ui-reference](../ui-reference/README.md) — registers the `@` file and session, and `#` session, reference sources.
 - [ui-conversation](../ui-conversation/README.md) — declares the input overlay slot and owns the composer and input machine.
 - [Web client architecture](../../../.agents/notes/implemented/architecture/2026-07-19-gui-web-client-architecture.md) — how browser plugin rows load and register slots.
 

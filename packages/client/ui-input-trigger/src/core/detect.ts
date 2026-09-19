@@ -31,11 +31,11 @@ function boundaryOk(draft: string, index: number, char: TriggerChar): boolean {
 
 /**
  * Detect a trigger token at the caret. `@` first uses the shared grammar,
- * including an open quoted token that may span whitespace. Slash detection
- * scans left to the first whitespace; slashes failing the word boundary are
- * treated as ordinary token chars and the scan continues (URL slashes).
- * Guard tiers: plain = both chars live; claimed = '/' fully suppressed,
- * '@' live; frozen = none.
+ * including an open quoted token that may span whitespace. The remaining
+ * triggers scan left to the first whitespace; a char failing the word
+ * boundary is treated as an ordinary token char and the scan continues (URL
+ * slashes). Guard tiers: plain = every char live; claimed = '/' fully
+ * suppressed, '@' and '#' live; frozen = none.
  *
  * @param draft - Full draft text.
  * @param caret - Caret offset into `draft`.
@@ -61,8 +61,8 @@ export const detectTrigger: DetectTrigger = (draft, caret, guard) => {
   for (let i = caret - 1; i >= 0; i--) {
     const ch = draft.charAt(i)
     if (WHITESPACE.test(ch)) return null
-    if (ch !== '/') continue
-    if (guard.tier === 'claimed') continue
+    if (ch !== '/' && ch !== '#') continue
+    if (ch === '/' && guard.tier === 'claimed') continue
     if (!boundaryOk(draft, i, ch)) continue
     return {
       trigger: ch,

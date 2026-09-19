@@ -6,6 +6,7 @@
  * text-ref entity transform consumes these ranges; editing the text out of
  * match shape simply drops the range next scan.
  */
+import type { InputTriggerChar } from '../contract/input.ts'
 
 /**
  * One plain-text reference range (the plain-text-reference decision;
@@ -41,7 +42,7 @@ const SLASH_TOKEN_END_RE = /^(?:\s|$)/
  * @returns matched ranges in draft order.
  */
 export function scanTextRefs(
-  draft: string, lexicon: ReadonlyMap<'/' | '@', readonly string[]>,
+  draft: string, lexicon: ReadonlyMap<InputTriggerChar, readonly string[]>,
 ): TextRefRange[] {
   if (draft === '') return []
   const out: TextRefRange[] = []

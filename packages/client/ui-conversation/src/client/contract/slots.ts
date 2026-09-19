@@ -16,7 +16,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { ComposerBlock } from './composer-blocks.ts'
-import type { DraftAttachmentId, InputActions, InputNotice, InputState } from './input.ts'
+import type { DraftAttachmentId, InputActions, InputNotice, InputState, InputTriggerChar } from './input.ts'
 import type { ComposerKeyboard, EditSelection } from './draft-editor.ts'
 import type { createConversationStore } from '../stores.ts'
 import type { BusyEnterBehavior } from './composer-submission.ts'
@@ -374,7 +374,7 @@ export interface ComposerBarInjected {
     /** Live per-draft upload states for file-kind drafts. */
     fileUploads: ObservableSnapshot<DraftFileUploads>
     notices: ObservableSnapshot<InputNotice | null>
-    lexicon: ObservableSnapshot<ReadonlyMap<'/' | '@', readonly string[]>>
+    lexicon: ObservableSnapshot<ReadonlyMap<InputTriggerChar, readonly string[]>>
     menuLauncher: ObservableSnapshot<string | null>
   }
 }

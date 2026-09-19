@@ -9,6 +9,7 @@ import { registerPlainText } from '@lexical/plain-text'
 import { createEmptyHistoryState, registerHistory } from '@lexical/history'
 import { mergeRegister } from '@lexical/utils'
 import type { Occurrence, ReferenceInsert } from '../../contract/draft-editor.ts'
+import type { InputTriggerChar } from '../../contract/input.ts'
 import { registerReferenceActivation } from './reference-activation.ts'
 import { ReferenceChipNode, $createReferenceChipNode } from './chip-node.tsx'
 import { refreshClaimDecoration, registerClaimDecoration } from './claim-decor.ts'
@@ -18,7 +19,7 @@ import { $composerLayout, $projectComposer, detectOffsetOfClipboardOffset } from
 import { $replaceDetectSpanWithNodes, $replaceDetectSpanWithText } from './span-map.ts'
 import type { DetectSpan } from './span-map.ts'
 
-type Lexicon = ReadonlyMap<'/' | '@', readonly string[]>
+type Lexicon = ReadonlyMap<InputTriggerChar, readonly string[]>
 
 /** Model callbacks read at the same editor registration and update points. */
 interface DraftEditorRuntimeDeps {

@@ -1,13 +1,14 @@
 /**
- * Unified Web `@` reference source. File and session discovery run through
- * the cancellable generated Remote namespaces in parallel with deterministic
- * ordering and labels.
+ * Unified Web `@` reference source, plus the session-only `#` source. File and
+ * session discovery run through the cancellable generated Remote namespaces in
+ * parallel with deterministic ordering and labels; `#` narrows the same
+ * discovery to sessions and orders them by workspace affinity.
  *
  * Rows carry only what distinguishes them: a file names its parent directory
  * (nothing at the workspace root), a directory listing names none because its
  * breadcrumb already does, and a session names its workspace only when that
  * workspace is not the current one. A session is dated from the Host session
- * list, so the `@` menu and the session list never disagree about its age.
+ * list, so the reference menu and the session list never disagree about its age.
  *
  * @module @deepseek-ai/dsh-client-ui-reference/client
  */
@@ -35,7 +36,7 @@ export const inject = [
 ]
 
 /**
- * Register the combined `@file` / `@session` source.
+ * Register the combined `@file` / `@session` source and the `#session` source.
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
@@ -131,8 +132,79 @@ export function apply(ctx: ClientContext): void {
       serialize: ref => Promise.resolve(ref),
     },
   }
+  const sessionsOnly = sessionSource(ctx, sessions, t)
   const inputTriggers = ctx.get('inputTriggers') as InputTriggerServiceContract
   ctx.effect(() => inputTriggers.registerSource(source), 'ui-reference: @ source')
+  ctx.effect(() => inputTriggers.registerSource(sessionsOnly), 'ui-reference: # source')
+}
+
+/**
+ * The `#` source: main sessions alone, same workspace first. `@` interleaves
+ * files with sessions and lifts this session's own subagents above the rest;
+ * `#` answers only "which session", so it drops subagents the way the Workspace
+ * tree does and partitions the Host's ranking into the requesting workspace and
+ * every other one instead of reordering peers.
+ * @param ctx - client root context.
+ * @param sessions - the client Session list (durable activity times and origin).
+ * @param t - the reference dictionary.
+ * @returns the source registered under the `#` trigger.
+ */
+function sessionSource(
+  ctx: ClientContext,
+  sessions: ISessions,
+  t: Translate,
+): InputTriggerSource {
+  return {
+    trigger: '#',
+    name: 'session',
+    showGroupTitle: false,
+    async candidates(session: ClientSessionContext, { query, signal }) {
+      const result = await ctx.remote.sessionReferenceResolver.candidates(session.sessionId, query, signal)
+      if (signal.aborted) return []
+      const items = result.ok ? result.value : []
+      const now = Date.now()
+      const home = ctx.remote.$host.home
+      const listed = sessions.list.getSnapshot().byId
+      const rows = items
+        // A subagent is reached through its parent's own reference: `@` lists
+        // this Session's direct children, and the Workspace tree hides the rest
+        // behind their parent's catalog. `#` lists the rows that tree roots.
+        .filter(candidate => listed[candidate.sessionId]?.origin !== 'subagent')
+        .map(candidate => ({
+          sameWorkspace: candidate.sameWorkspace,
+          row: sessionCandidate(
+            candidate,
+            candidate.displayTitle ?? candidate.label,
+            listed[candidate.sessionId]?.updatedAt ?? candidate.createdAt,
+            now,
+            home,
+            t(candidate.sameWorkspace ? 'section.currentWorkspace' : 'section.otherWorkspaces'),
+            t,
+          ),
+        }))
+      return [
+        ...rows.filter(item => item.sameWorkspace).map(item => item.row),
+        ...rows.filter(item => !item.sameWorkspace).map(item => item.row),
+      ]
+    },
+    onPick({ candidate }) {
+      const value = parseCandidate(candidate.value)
+      if (value?.kind !== 'session') return undefined
+      return {
+        insert: {
+          source: 'session',
+          ref: value.mention,
+          label: value.label,
+          appearance: 'session',
+          clipboardText: value.mention,
+        },
+      }
+    },
+    codec: {
+      clipboardText: ref => ref,
+      serialize: ref => Promise.resolve(ref),
+    },
+  }
 }
 
 type Translate = (key: ReferenceKey, params?: Record<string, unknown>) => string

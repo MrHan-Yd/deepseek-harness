@@ -1,5 +1,5 @@
 ---
-description: "Web GUI 的输入触发流水线：光标处的 / 与 @ 检测、分组候选菜单，以及把 pick 路由到已注册 source；供斜杠命令与引用的用户与维护者阅读。"
+description: "Web GUI 的输入触发流水线：光标处的 /、@ 与 # 检测、分组候选菜单，以及把 pick 路由到已注册 source；供斜杠命令与引用的用户与维护者阅读。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-当用户在 Web GUI 的光标处键入 `/` 或 `@` 时，本包会为斜杠命令、文件引用和会话引用打开分组菜单。它支持键盘和指针选择，包括下钻候选项，以及在当前选区上打开单个候选分组的 launcher。pick 会触发命令流程或插入引用，具体结果由消费方输入表面处理。本包只影响浏览器呈现；它既不组装也不发送模型请求。
+当用户在 Web GUI 的光标处键入 `/`、`@` 或 `#` 时，本包会为斜杠命令、文件引用和会话引用打开分组菜单。它支持键盘和指针选择，包括下钻候选项，以及在当前选区上打开单个候选分组的 launcher。pick 会触发命令流程或插入引用，具体结果由消费方输入表面处理。本包只影响浏览器呈现；它既不组装也不发送模型请求。
 
 ## 目录
 
@@ -53,7 +53,7 @@ kind: "package-reference"
 当触发流水线不够用时阅读以下页面。它们从流水线延伸到注册进其中的 source，以及拥有输入的会话外壳。
 
 - [ui-commands](../ui-commands/README.zh.md)——把 `/` 命令 source 注册进本流水线并拥有命令弹窗外壳。
-- [ui-reference](../ui-reference/README.zh.md)——注册 `@` 文件与会话引用 source。
+- [ui-reference](../ui-reference/README.zh.md)——注册 `@` 文件与会话、`#` 会话引用 source。
 - [ui-conversation](../ui-conversation/README.zh.md)——声明输入浮层 slot 并拥有 composer 与输入状态机。
 - [Web 客户端架构](../../../.agents/notes/implemented/architecture/2026-07-19-gui-web-client-architecture.zh.md)——浏览器插件行如何加载并注册 slot。
 

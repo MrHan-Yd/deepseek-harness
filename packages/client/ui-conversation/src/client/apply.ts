@@ -17,7 +17,7 @@ import type {
   ComposerBarInjected, ConversationInjected, ConversationSessionHeaderInjected,
   ConversationSessionInjected, DraftFileUploads,
 } from './contract/slots.ts'
-import type { InputNotice } from './contract/input.ts'
+import type { InputNotice, InputTriggerChar } from './contract/input.ts'
 import { createConversationStore, readConversationViewPreference } from './stores.ts'
 import { ConversationController, UnsupportedImageMediaTypeError } from './service.ts'
 import type { IConversation } from './service.ts'
@@ -71,7 +71,7 @@ const ABSENT_BLOCK = {
   getSnapshot: (): ComposerBlock | undefined => undefined,
   subscribe: () => () => {},
 }
-const EMPTY_LEXICON: ReadonlyMap<'/' | '@', readonly string[]> = new Map()
+const EMPTY_LEXICON: ReadonlyMap<InputTriggerChar, readonly string[]> = new Map()
 const ABSENT_LEXICON = {
   getSnapshot: () => EMPTY_LEXICON,
   subscribe: () => () => {},

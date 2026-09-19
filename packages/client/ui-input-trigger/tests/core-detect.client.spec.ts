@@ -18,6 +18,7 @@ describe('detectTrigger word boundaries', () => {
   it('triggers at start of draft', () => {
     expect(atEnd('/go')).toMatchObject({ trigger: '/', query: 'go', position: 'leading' })
     expect(atEnd('@wo')).toMatchObject({ trigger: '@', query: 'wo', position: 'leading' })
+    expect(atEnd('#se')).toMatchObject({ trigger: '#', query: 'se', position: 'leading' })
   })
 
   it('triggers after whitespace, newline, and punctuation', () => {
@@ -25,12 +26,16 @@ describe('detectTrigger word boundaries', () => {
     expect(atEnd('line1\n/go')).toMatchObject({ trigger: '/', query: 'go', position: 'inline' })
     expect(atEnd('see (/go')).toMatchObject({ trigger: '/', query: 'go' })
     expect(atEnd('ping @wo')).toMatchObject({ trigger: '@', query: 'wo' })
+    expect(atEnd('from #se')).toMatchObject({ trigger: '#', query: 'se' })
+    expect(atEnd('line1\n#se')).toMatchObject({ trigger: '#', query: 'se', position: 'inline' })
   })
 
   it('does not trigger after a word character', () => {
     expect(atEnd('user@host')).toBeNull()
     expect(atEnd('a/b')).toBeNull()
     expect(atEnd('foo_1@bar')).toBeNull()
+    expect(atEnd('issue#42')).toBeNull()
+    expect(atEnd('a#b')).toBeNull()
   })
 
   it('does not trigger on URL slashes', () => {
@@ -53,10 +58,13 @@ describe('detectTrigger word boundaries', () => {
     // Space after the token: no trigger at the caret anymore.
     expect(atEnd('/goal x')).toBeNull()
     expect(atEnd('@worker done')).toBeNull()
+    expect(atEnd('#session done')).toBeNull()
   })
 
   it('finds the nearest trigger left of the caret', () => {
     expect(atEnd('/goal @wor')).toMatchObject({ trigger: '@', query: 'wor' })
+    expect(atEnd('/goal #ses')).toMatchObject({ trigger: '#', query: 'ses' })
+    expect(atEnd('#ses @wor')).toMatchObject({ trigger: '@', query: 'wor' })
   })
 })
 
@@ -73,10 +81,11 @@ describe('detectTrigger position', () => {
 })
 
 describe('detectTrigger guard tiers', () => {
-  it('claimed suppresses "/" everywhere but keeps "@"', () => {
+  it('claimed suppresses "/" everywhere but keeps "@" and "#"', () => {
     expect(atEnd('/co', claimed)).toBeNull()
     expect(atEnd('args /path', claimed)).toBeNull()
     expect(atEnd('/goal @wor', claimed)).toMatchObject({ trigger: '@', query: 'wor' })
+    expect(atEnd('/goal #ses', claimed)).toMatchObject({ trigger: '#', query: 'ses' })
   })
 
   it('a suppressed "/" is scanned through like an ordinary char', () => {
@@ -84,9 +93,10 @@ describe('detectTrigger guard tiers', () => {
     expect(detectTrigger('/goal /x', 8, claimed)).toBeNull()
   })
 
-  it('frozen suppresses both triggers', () => {
+  it('frozen suppresses every trigger', () => {
     expect(atEnd('/co', frozen)).toBeNull()
     expect(atEnd('@wo', frozen)).toBeNull()
+    expect(atEnd('#se', frozen)).toBeNull()
   })
 })
 
