@@ -188,15 +188,19 @@ macOS signing visits real files without following Framework symlink aliases. PAK
 
 Company proxies can accelerate uploads to Apple's notarization service. See the company internal documentation for configuration.
 
-### Unsigned Windows test installer
+### Unsigned local packages
 
-On Windows x64, use the complete unsigned packaging command for local installation testing:
+Without release signing credentials, each platform can still build an installable package for local testing:
 
 ```sh
+pnpm run package:desktop:mac:arm64:unsigned
+pnpm run package:desktop:mac:x64:unsigned
 pnpm run package:desktop:win:x64:unsigned
 ```
 
-The command requires `DSH_DESKTOP_APP_ID` and the normal build dependencies, including Python and Visual C++ build tools for native modules. Set `PYTHON` to the Python executable when it is absent from `PATH`. It writes the installer to `.desktop-build/targets/win-x64/unsigned-artifacts/`, omits automatic-update configuration, strips signing credentials, and creates no release completion record. It does not require EV credentials or an update origin. The signed packaging and upload commands retain their release requirements.
+Every unsigned command writes to `.desktop-build/targets/<target>/unsigned-artifacts/`, omits automatic-update configuration, strips signing credentials, and creates no release completion record. It requires `DSH_DESKTOP_APP_ID` and the mandatory-update origins, and the normal build dependencies, including Python and Visual C++ build tools for native modules on Windows; set `PYTHON` to the Python executable when it is absent from `PATH`. Windows also does not require EV credentials or an update origin. The signed packaging and upload commands retain their release requirements.
+
+An unsigned macOS application is ad-hoc signed, which keeps its embedded native executables loadable on Apple Silicon, but it carries no Developer ID authority and no notarization ticket. Gatekeeper therefore refuses its first launch: open the application through Control-click → Open, or clear the quarantine attribute of the installed copy with `xattr -dr com.apple.quarantine`. Distributing the package to other people requires the signed commands, and unsigned artifacts remain ineligible for upload.
 
 ### Windows installer interface
 

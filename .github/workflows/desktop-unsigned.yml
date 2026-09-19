@@ -1,0 +1,135 @@
+name: Desktop unsigned packages
+
+# Builds locally installable Desktop packages for macOS and Windows without
+# release signing credentials. macOS artifacts are ad-hoc signed so Apple
+# Silicon loads their native code; Windows artifacts are unsigned NSIS
+# installers. Signed release packaging and uploads stay in the separate release
+# flow ([desktop README](../apps/desktop/README.md#package)).
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Packages to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - mac-arm64
+          - win-x64
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+
+  mac-arm64:
+    if: inputs.targets == 'all' || inputs.targets == 'mac-arm64'
+    name: mac arm64 / unsigned
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # The packaged application plus its prepared runtime needs more room than
+      # a hosted runner leaves after caches and simulator images.
+      - name: Free disk space
+        run: |
+          rm -rf ~/Library/Caches/* ~/Library/Developer/CoreSimulator/Caches/* 2>/dev/null || true
+          df -h /
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      # Release settings are file-owned; an unsigned macOS package needs the
+      # application identifier and the mandatory-update origins only.
+      - name: Write packaging environment
+        run: |
+          cat > apps/desktop/.env.macos <<'ENV'
+          DSH_DESKTOP_APP_ID=com.deepseek.harness
+          DSH_DESKTOP_AUTO_UPDATE_ENV=test
+          DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://harness-test.deepseek.com
+          DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://harness.deepseek.com
+          ENV
+
+      - name: Package (ad-hoc signed)
+        run: pnpm run package:desktop:mac:arm64:unsigned
+
+      - name: Report disk usage
+        if: always()
+        run: df -h /
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-mac-arm64-unsigned
+          path: apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  win-x64:
+    if: inputs.targets == 'all' || inputs.targets == 'win-x64'
+    name: windows x64 / unsigned
+    runs-on: windows-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Enable Developer Mode (symlink support)
+        shell: pwsh
+        run: >-
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
+          /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      - name: Install (immutable)
+        shell: pwsh
+        run: >-
+          $drive = (Split-Path -Qualifier $env:GITHUB_WORKSPACE).TrimEnd(':');
+          $fs = (Get-Volume -DriveLetter $drive).FileSystem;
+          if ($fs -eq 'ReFS') {
+            pnpm install --frozen-lockfile --package-import-method=clone
+          } else {
+            pnpm install --frozen-lockfile
+          }
+
+      # Release settings are file-owned; an unsigned Windows package needs the
+      # application identifier and the mandatory-update origins only.
+      - name: Write packaging environment
+        shell: pwsh
+        run: |
+          @'
+          DSH_DESKTOP_APP_ID=com.deepseek.harness
+          DSH_DESKTOP_AUTO_UPDATE_ENV=test
+          DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://harness-test.deepseek.com
+          DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://harness.deepseek.com
+          '@ | Set-Content -Path apps/desktop/.env.windows -Encoding utf8
+
+      - name: Package (unsigned)
+        run: pnpm run package:desktop:win:x64:unsigned
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-win-x64-unsigned
+          path: apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/
+          if-no-files-found: warn
+          retention-days: 14

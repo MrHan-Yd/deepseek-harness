@@ -25,6 +25,7 @@ import {
 } from './desktop-release-environment.mjs'
 import {
   signMacOSRuntime,
+  signMacOSRuntimeAdHoc,
 } from './macos-runtime.ts'
 import { resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 import { desktopRuntimeFileExclusion } from './runtime-file-policy.ts'
@@ -143,9 +144,15 @@ async function main(): Promise<void> {
     if (!existsSync(join(DSH_OUTPUT_ROOT, 'node_modules', '@deepseek-ai', `libreoffice-kit-${officeEngine}`, 'prebuilds.json'))) {
       throw new Error(`desktop runtime: missing required LibreOffice engine ${officeEngine}`)
     }
+    // An unsigned application is ad-hoc signed here, before the integrity seal,
+    // because electron-builder skips these pre-signed trees.
     if (process.platform === 'darwin') {
-      await signMacOSRuntime(DSH_OUTPUT_ROOT, resolveDesktopAppId(process.env), resolveMacOSSigningEnvironment(process.env))
-      await signMacOSRuntime(join(RUNTIME_ROOT, 'primary-runtime'), resolveDesktopAppId(process.env), resolveMacOSSigningEnvironment(process.env))
+      const appId = resolveDesktopAppId(process.env)
+      const signRuntime = process.env.DSH_DESKTOP_UNSIGNED === '1'
+        ? (root: string) => signMacOSRuntimeAdHoc(root, appId)
+        : (root: string) => signMacOSRuntime(root, appId, resolveMacOSSigningEnvironment(process.env))
+      await signRuntime(DSH_OUTPUT_ROOT)
+      await signRuntime(join(RUNTIME_ROOT, 'primary-runtime'))
     }
     smokePrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime'))
     writeDesktopRuntime(DSH_OUTPUT_ROOT, release, packageSet.packages.map(entry => entry.name), target)

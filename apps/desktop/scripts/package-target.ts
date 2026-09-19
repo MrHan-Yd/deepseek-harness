@@ -66,6 +66,9 @@ const TARGETS: Record<DesktopPackageTargetName, DesktopPackageTarget> = {
   },
 }
 
+/** Targets that can emit a local artifact without release signing credentials. */
+const UNSIGNED_TARGET_NAMES: readonly DesktopPackageTargetName[] = ['win-x64', 'mac-arm64', 'mac-x64']
+
 /**
  * Remove Windows signing configuration from package preparation subprocesses.
  * @param environment - Packaging command environment.
@@ -79,7 +82,7 @@ export function withoutWindowsSigningEnvironment(environment: NodeJS.ProcessEnv)
 /**
  * Select signing and NSIS-compatible archive filters for electron-builder.
  * @param environment - Target packaging environment.
- * @param unsigned - Whether to create a local unsigned Windows artifact.
+ * @param unsigned - Whether to create a local unsigned artifact for Windows or macOS.
  * @returns Packaging environment without certificate inputs for unsigned builds.
  */
 export function desktopElectronBuilderEnvironment(environment: NodeJS.ProcessEnv, unsigned: boolean): NodeJS.ProcessEnv {
@@ -87,12 +90,14 @@ export function desktopElectronBuilderEnvironment(environment: NodeJS.ProcessEnv
   // The bundled NSIS decoder cannot extract 7-Zip's automatic ARM64-filtered entries.
   if (environment.DSH_DESKTOP_TARGET_PLATFORM === 'win32') selected.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'
   if (!unsigned) return selected
-  return {
-    ...Object.fromEntries(Object.entries(withoutWindowsSigningEnvironment(selected))
-      .filter(([name]) => !/^(?:WIN_)?CSC_/iu.test(name))),
-    CSC_IDENTITY_AUTO_DISCOVERY: 'false',
-    DSH_DESKTOP_UNSIGNED: '1',
+  const stripped = Object.fromEntries(Object.entries(withoutWindowsSigningEnvironment(selected))
+    .filter(([name]) => !/^(?:WIN_)?CSC_/iu.test(name)))
+  // An unsigned macOS build still runs electron-builder's ad-hoc signer, which
+  // is skipped entirely when certificate discovery is disabled.
+  if (environment.DSH_DESKTOP_TARGET_PLATFORM === 'darwin') {
+    return { ...stripped, DSH_DESKTOP_UNSIGNED: '1' }
   }
+  return { ...stripped, CSC_IDENTITY_AUTO_DISCOVERY: 'false', DSH_DESKTOP_UNSIGNED: '1' }
 }
 
 /**
@@ -209,7 +214,9 @@ export function parseDesktopPackageInvocation(
   })
   if (positionals.length > 1) throw new Error('desktop package: expected at most one target')
   const name = positionals[0] ?? hostTargetName(hostPlatform, hostArch)
-  if (values.unsigned && name !== 'win-x64') throw new Error('desktop package: --unsigned requires win-x64')
+  if (values.unsigned && !UNSIGNED_TARGET_NAMES.includes(name as DesktopPackageTargetName)) {
+    throw new Error(`desktop package: --unsigned requires ${UNSIGNED_TARGET_NAMES.join(', ')}`)
+  }
   if (values.unsigned && values['prepare-only']) throw new Error('desktop package: --unsigned cannot use --prepare-only')
   return {
     target: resolveDesktopPackageTarget(name, hostPlatform, hostArch),
@@ -292,7 +299,7 @@ async function main(): Promise<void> {
   if (run !== undefined) console.log(`DESKTOP_PACKAGING_RECORD ${run.directory}`)
   let success = false
   try {
-    if (target.platform === 'darwin') {
+    if (target.platform === 'darwin' && !invocation.unsigned) {
       await withMacOSSigningKeychain(environment, signingEnvironment => packageTarget(invocation, signingEnvironment, run))
     } else {
       await packageTarget(invocation, environment, run)
@@ -324,6 +331,7 @@ export async function packageTarget(
   const buildEnv = withoutWindowsSigningEnvironment(withoutDesktopUploadCredentials(environment))
   const targetEnv: NodeJS.ProcessEnv = {
     ...buildEnv,
+    DSH_DESKTOP_UNSIGNED: invocation.unsigned ? '1' : '0',
     DSH_DESKTOP_TARGET_PLATFORM: target.platform,
     DSH_DESKTOP_TARGET_ARCH: target.arch,
   }
@@ -363,7 +371,7 @@ export async function packageTarget(
   await execute(['run', 'prepare:packages'], targetEnv)
   await execute(['run', 'prepare:dsh'], targetEnv)
   if (invocation.prepareOnly) return
-  if (target.platform === 'darwin' && !invocation.directory) {
+  if (target.platform === 'darwin' && !invocation.directory && !invocation.unsigned) {
     await execute([
       ...desktopElectronBuilderArguments(target, true),
       '--config.mac.notarize=false',

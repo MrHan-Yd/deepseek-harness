@@ -130,6 +130,36 @@ export async function signMacOSRuntimeCode(path, identifier, expected, entitleme
 }
 
 /**
+ * Ad-hoc sign one Mach-O file for a local unsigned package.
+ *
+ * Apple Silicon refuses to load an unsigned native executable, and no release
+ * identity is available: the ad-hoc signature carries no authority, no secure
+ * timestamp, and therefore no hardened runtime option.
+ * @param {string} path - Writable standalone Mach-O file.
+ * @param {string} identifier - Stable code-signing identifier derived from the release app ID and CAS digest.
+ * @param {string | undefined} entitlements - Optional entitlement plist for this executable.
+ * @returns {Promise<void>} Resolves after codesign exits successfully.
+ */
+export async function signMacOSRuntimeCodeAdHoc(path, identifier, entitlements) {
+  await runAppleCommandAsync('/usr/bin/codesign', [
+    '--force',
+    '--sign', '-',
+    '--identifier', identifier,
+    ...(entitlements === undefined ? [] : ['--entitlements', entitlements]),
+    path,
+  ], 'codesign')
+}
+
+/**
+ * Verify one ad-hoc signed Mach-O file embedded in the runtime tree.
+ * @param {string} path - Mach-O file to inspect.
+ * @returns {void}
+ */
+export function verifyMacOSRuntimeCodeAdHoc(path) {
+  runCodeSign(['--verify', '--strict', '--verbose=2', path])
+}
+
+/**
  * Verify one Mach-O file embedded in the runtime tree.
  * @param {string} path - Mach-O file to inspect.
  * @param {{ signingIdentity: string, teamId: string }} expected - Public release identity.

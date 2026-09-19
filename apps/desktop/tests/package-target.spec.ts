@@ -59,14 +59,18 @@ describe('desktop package target', () => {
     expect(desktopElectronBuilderArguments(target, true)).toContain('--dir')
   })
 
-  it('accepts unsigned Windows artifacts and rejects other targets or preparation-only use', () => {
+  it('accepts unsigned Windows and macOS artifacts and rejects other targets or preparation-only use', () => {
     expect(parseDesktopPackageInvocation(['win-x64', '--unsigned'], 'win32', 'x64').unsigned).toBe(true)
     expect(parseDesktopPackageInvocation(['win-x64'], 'win32', 'x64').unsigned).toBe(false)
     expect(parseDesktopPackageInvocation(['--unsigned', '--dir'], 'win32', 'x64')).toMatchObject({
       unsigned: true, directory: true,
     })
-    expect(() => parseDesktopPackageInvocation(['mac-arm64', '--unsigned'], 'darwin', 'arm64'))
-      .toThrow(/requires win-x64/u)
+    expect(parseDesktopPackageInvocation(['mac-arm64', '--unsigned'], 'darwin', 'arm64')).toMatchObject({
+      unsigned: true, target: { name: 'mac-arm64' },
+    })
+    expect(parseDesktopPackageInvocation(['mac-x64', '--unsigned'], 'darwin', 'arm64').unsigned).toBe(true)
+    expect(() => parseDesktopPackageInvocation(['linux-x64', '--unsigned'], 'linux', 'x64'))
+      .toThrow(/requires win-x64, mac-arm64, mac-x64/u)
     expect(() => parseDesktopPackageInvocation(['--unsigned', '--prepare-only'], 'win32', 'x64'))
       .toThrow(/cannot use --prepare-only/u)
   })
@@ -87,6 +91,19 @@ describe('desktop package target', () => {
       DSH_DESKTOP_UNSIGNED: '1',
     })
     expect(desktopElectronBuilderEnvironment(environment, false)).toEqual({ ...environment, DSH_DESKTOP_UNSIGNED: '0' })
+  })
+
+  it('keeps certificate discovery enabled for an unsigned macOS target', () => {
+    const environment = {
+      DSH_DESKTOP_TARGET_PLATFORM: 'darwin',
+      CSC_LINK: 'certificate.p12',
+      CSC_KEY_PASSWORD: 'secret',
+      CSC_IDENTITY_AUTO_DISCOVERY: 'true',
+    }
+    expect(desktopElectronBuilderEnvironment(environment, true)).toEqual({
+      DSH_DESKTOP_TARGET_PLATFORM: 'darwin',
+      DSH_DESKTOP_UNSIGNED: '1',
+    })
   })
 
   it.each([false, true])('pins the Windows archive filter for the NSIS decoder (unsigned: %s)', (unsigned) => {
