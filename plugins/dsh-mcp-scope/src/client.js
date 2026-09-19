@@ -3,7 +3,8 @@
  *
  * Shipped as a Dynamic Client bundle without a build step: the factory takes
  * `react` from the platform module table and builds every element with
- * `createElement`, so the file in `lib/` is the file a reviewer reads.
+ * `createElement`, so the file in `src/` is the file a reviewer reads. Icons are
+ * inline SVG for the same reason: the bundle resolves nothing but `react`.
  *
  * The page talks to the host half over the same-origin `/mcp-scope/api` routes
  * and always sends the `x-dsh-mcp-scope` header the host requires.
@@ -26,13 +27,17 @@ window.__ModuleLoader__.load({
     const zh = {
       nav: 'MCP 服务器',
       title: 'MCP 服务器',
-      intro: '按工作区管理 MCP 服务器。作用域为「全局」的服务器对所有会话可见；作用域为某个工作区的服务器只在该工作区的会话中可见。',
-      storeAt: '配置存储',
-      reload: '刷新',
-      add: '添加服务器',
-      empty: '还没有配置任何 MCP 服务器。',
+      count: 'MCP 服务器',
+      search: '搜索 MCP 服务器…',
+      scopeAll: '全部作用域',
       global: '全局',
       workspace: '工作区',
+      installed: '已安装',
+      items: '项',
+      newServer: '新建',
+      reload: '刷新',
+      empty: '还没有配置任何 MCP 服务器。',
+      emptyFiltered: '没有匹配的 MCP 服务器。',
       enabled: '已启用',
       disabled: '已停用',
       mountFailed: '装载失败',
@@ -78,18 +83,29 @@ window.__ModuleLoader__.load({
       trialNoTools: '该服务器当前没有注册工具。',
       scopeHint: '选择该服务器在哪些会话中可见。',
       errorPrefix: '操作失败',
+      commandChipHint: '在输入框输入 / 即可让一个只能调用这个服务器工具的子代理干活，结果会回到当前会话',
+      commandUnavailable: '名称不能作命令',
+      commandUnavailableHint: '斜杠命令只接受小写字母开头的名字，重命名服务器后即可用 / 调用',
+      commandConflict: '命令名冲突',
+      commandConflictHint: '已有同名命令，这个服务器的 / 命令会遮蔽它',
+      storeAt: '配置存储',
+      footerHint: '作用域为「全局」的服务器对所有会话可见；作用域为某个工作区的只在该工作区的会话中可见。',
     }
 
     const en = {
       nav: 'MCP servers',
       title: 'MCP servers',
-      intro: 'Manage MCP servers per workspace. A server scoped to Global is visible to every session; a server scoped to one workspace is visible only to sessions running in it.',
-      storeAt: 'Config store',
-      reload: 'Refresh',
-      add: 'Add server',
-      empty: 'No MCP servers configured yet.',
+      count: 'MCP servers',
+      search: 'Search MCP servers…',
+      scopeAll: 'All scopes',
       global: 'Global',
       workspace: 'Workspace',
+      installed: 'Installed',
+      items: '',
+      newServer: 'New',
+      reload: 'Refresh',
+      empty: 'No MCP servers configured yet.',
+      emptyFiltered: 'No MCP server matches.',
       enabled: 'Enabled',
       disabled: 'Disabled',
       mountFailed: 'Mount failed',
@@ -135,10 +151,18 @@ window.__ModuleLoader__.load({
       trialNoTools: 'This server has no registered tools yet.',
       scopeHint: 'Choose which sessions can see this server.',
       errorPrefix: 'Failed',
+      commandChipHint: 'Type / in the composer to run a child agent limited to this server’s tools; its result returns to this session',
+      commandUnavailable: 'No / command',
+      commandUnavailableHint: 'A slash command name must start with a lowercase letter; rename the server to invoke it as /name',
+      commandConflict: 'Command name taken',
+      commandConflictHint: 'Another command already uses this name, so this server’s / command shadows it',
+      storeAt: 'Config store',
+      footerHint: 'A server scoped to Global is visible to every session; one scoped to one workspace is visible only to sessions running in it.',
     }
 
     /** Tokens shared by every control; neutral so both themes render. */
     const border = '1px solid color-mix(in srgb, currentColor 18%, transparent)'
+    const softBorder = '1px solid color-mix(in srgb, currentColor 12%, transparent)'
     const subtle = 'color-mix(in srgb, currentColor 6%, transparent)'
     const fieldStyle = {
       width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8,
@@ -148,9 +172,47 @@ window.__ModuleLoader__.load({
       padding: '7px 14px', borderRadius: 8, border, background: subtle,
       color: 'inherit', font: 'inherit', cursor: 'pointer',
     }
-    const primaryStyle = {
-      ...buttonStyle, background: 'color-mix(in srgb, currentColor 16%, transparent)', fontWeight: 600,
+    const iconButtonStyle = {
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+      width: 32, height: 32, padding: 0, borderRadius: 8, border, background: 'transparent',
+      color: 'inherit', cursor: 'pointer',
     }
+    const chipStyle = {
+      fontSize: 11, padding: '2px 8px', borderRadius: 6, border: softBorder,
+      opacity: 0.75, whiteSpace: 'nowrap',
+    }
+
+    /**
+     * One inline SVG glyph.
+     * @param props - the glyph props.
+     * @returns the svg element.
+     */
+    function Glyph(props) {
+      return h('svg', {
+        width: props.size ?? 16,
+        height: props.size ?? 16,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: props.weight ?? 1.7,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        style: { flexShrink: 0, display: 'block' },
+        'aria-hidden': true,
+      }, h('path', { d: props.d }))
+    }
+
+    const PlugGlyph = (props) => h(Glyph, {
+      ...props,
+      d: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8ZM12 17v4',
+    })
+    const SearchGlyph = (props) => h(Glyph, { ...props, d: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.3-4.3' })
+    const RefreshGlyph = (props) => h(Glyph, { ...props, d: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6' })
+    const PlusGlyph = (props) => h(Glyph, { ...props, d: 'M12 5v14M5 12h14' })
+    const TrashGlyph = (props) => h(Glyph, { ...props, d: 'M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v6M14 11v6' })
+    const ScreenGlyph = (props) => h(Glyph, { ...props, d: 'M3 5h18v11H3zM9 20h6M12 16v4' })
+    const WaveGlyph = (props) => h(Glyph, { ...props, d: 'M3 12h3l2.5-6 4 12 2.5-6h6' })
+    const PlayGlyph = (props) => h(Glyph, { ...props, d: 'M8 5.5 18 12 8 18.5z' })
 
     /**
      * One request against the host half.
@@ -178,7 +240,8 @@ window.__ModuleLoader__.load({
      * @returns the field element.
      */
     function Field(props) {
-      return h('label', { style: { display: 'block', marginBottom: 14 } },
+      const kind = props.as ?? 'label'
+      return h(kind, { style: { display: 'block', marginBottom: 14, minWidth: 0 } },
         h('div', { style: { fontSize: 12, opacity: 0.75, marginBottom: 5 } }, props.label),
         props.children,
         props.hint === undefined
@@ -187,8 +250,54 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Render the switch used by the enable toggle.
+     * @param props - checked state, tooltip, and change handler.
+     * @returns the switch element.
+     */
+    function Switch(props) {
+      return h('button', {
+        type: 'button',
+        role: 'switch',
+        'aria-checked': props.checked,
+        title: props.title,
+        onClick: (event) => {
+          event.stopPropagation()
+          props.onChange(!props.checked)
+        },
+        style: {
+          width: 40, height: 22, borderRadius: 999, border, cursor: 'pointer', padding: 2,
+          background: props.checked ? '#4f7cf7' : subtle,
+          display: 'flex', alignItems: 'center', flexShrink: 0,
+          justifyContent: props.checked ? 'flex-end' : 'flex-start',
+          transition: 'background 120ms ease',
+        },
+      }, h('span', {
+        style: {
+          width: 16, height: 16, borderRadius: 999, background: '#fff',
+          boxShadow: '0 1px 2px rgba(0,0,0,.35)',
+        },
+      }))
+    }
+
+    /**
+     * The tile that stands in for a server's avatar.
+     * @param props - the glyph to show.
+     * @returns the tile element.
+     */
+    function Tile(props) {
+      return h('div', {
+        style: {
+          position: 'relative', width: 42, height: 42, borderRadius: 11, border,
+          background: subtle, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0, opacity: 0.9,
+        },
+      }, props.children)
+    }
+
+    /**
      * Parse KEY=VALUE lines into a map.
      * @param text - the textarea contents.
+     * @param separator - the assignment marker.
      * @returns the parsed map.
      */
     function parsePairs(text, separator) {
@@ -208,6 +317,7 @@ window.__ModuleLoader__.load({
     /**
      * Render a map as editable lines.
      * @param map - the map to render.
+     * @param separator - the assignment marker.
      * @returns the textarea contents.
      */
     function formatPairs(map, separator) {
@@ -278,40 +388,48 @@ window.__ModuleLoader__.load({
       }
 
       const scopeOptions = [
-        h('option', { key: 'global', value: 'global' }, `${t('global')}`),
+        h('option', { key: 'global', value: 'global' }, t('global')),
         ...workspaces.map(workspace =>
           h('option', { key: workspace.path, value: workspace.path },
             `${t('workspace')} · ${workspace.title}`)),
       ]
 
-      return h('div', { style: { maxWidth: 720 } },
-        h('div', { style: { fontSize: 20, fontWeight: 600, marginBottom: 6 } },
-          editing ? t('editTitle') : t('createTitle')),
-        h('div', { style: { fontSize: 13, opacity: 0.65, marginBottom: 22 } },
-          editing ? t('editHint') : t('createHint')),
+      return h('div', { style: { maxWidth: 880 } },
+        h('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22 } },
+          h('div', null,
+            h('div', { style: { fontSize: 20, fontWeight: 600, marginBottom: 6 } },
+              editing ? t('editTitle') : t('createTitle')),
+            h('div', { style: { fontSize: 13, opacity: 0.65 } },
+              editing ? t('editHint') : t('createHint'))),
+          h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, opacity: 0.8, flexShrink: 0 } },
+            t('fieldScope'),
+            h('select', {
+              style: { ...fieldStyle, width: 'auto', minWidth: 190 },
+              value: scope,
+              onChange: event => setScope(event.target.value),
+            }, scopeOptions))),
 
-        h(Field, { label: t('fieldName'), hint: editing ? undefined : t('fieldNameHint') },
-          h('input', {
-            style: { ...fieldStyle, ...(editing ? { opacity: 0.6 } : {}) },
-            value: name,
-            disabled: editing,
-            placeholder: 'my-mcp-server',
-            onChange: event => setName(event.target.value),
-          })),
-
-        h(Field, { label: t('fieldScope'), hint: t('scopeHint') },
-          h('select', { style: fieldStyle, value: scope, onChange: event => setScope(event.target.value) }, scopeOptions)),
-
-        h(Field, { label: t('fieldTransport') },
-          h('select', { style: fieldStyle, value: transport, onChange: event => setTransport(event.target.value) },
-            h('option', { value: 'stdio' }, t('transportStdio')),
-            h('option', { value: 'streamable-http' }, t('transportHttp')))),
-
-        h(Field, { label: t('fieldTimeout') },
-          h('input', {
-            style: fieldStyle, value: timeout,
-            onChange: event => setTimeoutMs(event.target.value.replace(/[^0-9]/gu, '')),
-          })),
+        h('div', { style: { display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' } },
+          h('div', { style: { flex: '1 1 200px', minWidth: 0 } },
+            h(Field, { label: t('fieldName'), hint: editing ? undefined : t('fieldNameHint') },
+              h('input', {
+                style: { ...fieldStyle, ...(editing ? { opacity: 0.6 } : {}) },
+                value: name,
+                disabled: editing,
+                placeholder: 'my-mcp-server',
+                onChange: event => setName(event.target.value),
+              }))),
+          h('div', { style: { flex: '1 1 160px', minWidth: 0 } },
+            h(Field, { label: t('fieldTransport') },
+              h('select', { style: fieldStyle, value: transport, onChange: event => setTransport(event.target.value) },
+                h('option', { value: 'stdio' }, t('transportStdio')),
+                h('option', { value: 'streamable-http' }, t('transportHttp'))))),
+          h('div', { style: { flex: '0 0 150px' } },
+            h(Field, { label: t('fieldTimeout') },
+              h('input', {
+                style: fieldStyle, value: timeout,
+                onChange: event => setTimeoutMs(event.target.value.replace(/[^0-9]/gu, '')),
+              })))),
 
         transport === 'stdio'
           ? [
@@ -354,14 +472,203 @@ window.__ModuleLoader__.load({
           ? null
           : h('div', { style: { color: '#e5484d', fontSize: 13, marginBottom: 12 } }, failure),
 
-        h('div', { style: { display: 'flex', gap: 10, marginTop: 8 } },
+        h('div', { style: { display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 } },
+          h('button', { style: buttonStyle, disabled: busy, onClick: onCancel }, t('cancel')),
           h('button', {
-            style: { ...primaryStyle, opacity: busy ? 0.6 : 1 },
+            style: {
+              ...buttonStyle, fontWeight: 600, opacity: busy ? 0.6 : 1,
+              background: 'color-mix(in srgb, currentColor 16%, transparent)',
+            },
             disabled: busy,
             onClick: () => { void submit() },
-          }, busy ? t('saving') : t('save')),
-          h('button', { style: buttonStyle, disabled: busy, onClick: onCancel }, t('cancel'))),
+          }, busy ? t('saving') : t('save'))),
       )
+    }
+
+    /**
+     * One installed server row.
+     * @param props - the record, its title lookup, and the row actions.
+     * @returns the row element.
+     */
+    function ServerRow(props) {
+      const { t, server, probe, pending, trial, trialResult, trialBusy, handlers } = props
+      const isGlobal = server.scope === 'global'
+      const scopeBadge = isGlobal ? t('global') : `${t('workspace')} · ${props.titleOf(server.scope)}`
+      const status = !server.enabled
+        ? { text: `○ ${t('disabled')}`, color: undefined }
+        : server.mounted
+          ? { text: `● ${t('mounted')}`, color: '#30a46c' }
+          : { text: `○ ${t('mountFailed')}`, color: '#e5484d' }
+      const target = server.transport === 'stdio'
+        ? `${server.command} ${(server.args ?? []).join(' ')}`.trim()
+        : server.url
+
+      const chips = [
+        h('span', { key: 'transport', style: chipStyle }, server.transport),
+        server.commandName === null
+          ? h('span', {
+            key: 'command',
+            style: { ...chipStyle, color: '#e5484d', opacity: 0.9 },
+            title: t('commandUnavailableHint'),
+          }, t('commandUnavailable'))
+          : h('span', {
+            key: 'command',
+            style: {
+              ...chipStyle, fontFamily: 'ui-monospace, monospace',
+              color: server.commandConflict === true ? '#e5484d' : undefined,
+            },
+            title: server.commandConflict === true ? t('commandConflictHint') : t('commandChipHint'),
+          }, server.commandConflict === true ? `/${server.commandName} ${t('commandConflict')}` : `/${server.commandName}`),
+        h('span', { key: 'scope', style: chipStyle }, scopeBadge),
+        h('span', { key: 'status', style: { ...chipStyle, color: status.color } }, status.text),
+        h('span', { key: 'tools', style: chipStyle },
+          `${(server.tools ?? []).length} ${t('tools')}`),
+      ]
+      if (server.mounted && (server.sessions ?? 0) > 0) {
+        chips.push(h('span', {
+          key: 'sessions',
+          style: { ...chipStyle, border: 'none', padding: 0, opacity: 0.5 },
+        }, `${server.sessions} ${t('sessions')}`))
+      }
+
+      const ghostButton = (icon, label, onClick, extra) => h('button', {
+        type: 'button',
+        style: {
+          ...buttonStyle, padding: '5px 10px', fontSize: 12,
+          display: 'inline-flex', alignItems: 'center', gap: 6, ...(extra ?? {}),
+        },
+        onClick: (event) => { event.stopPropagation(); onClick() },
+      }, icon, label)
+
+      return h('div', {
+        style: {
+          border, borderRadius: 12, padding: '14px 16px', marginBottom: 10,
+          opacity: server.enabled ? 1 : 0.55,
+        },
+      },
+      h('div', {
+        role: 'button',
+        tabIndex: 0,
+        title: t('edit'),
+        onClick: () => handlers.onEdit(),
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            handlers.onEdit()
+          }
+        },
+        style: { display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' },
+      },
+      h(Tile, null, h(PlugGlyph, { size: 21 })),
+      h('div', { style: { flex: 1, minWidth: 0 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+          h('span', { style: { fontWeight: 600, fontSize: 14 } }, server.serverName),
+          ...chips),
+        h('div', {
+          style: {
+            fontSize: 12.5, opacity: 0.55, marginTop: 6, fontFamily: 'ui-monospace, monospace',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          },
+        }, target),
+        server.mountError === null || server.mountError === undefined
+          ? null
+          : h('div', { style: { fontSize: 12, color: '#e5484d', marginTop: 6 } }, server.mountError)),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 } },
+        ghostButton(
+          h(WaveGlyph, { size: 13 }),
+          probe?.busy === true ? t('probing') : t('probe'),
+          () => handlers.onProbe(),
+          { opacity: probe?.busy === true ? 0.6 : 1 },
+        ),
+        ghostButton(
+          h(PlayGlyph, { size: 13 }),
+          t('trial'),
+          () => handlers.onTrial(),
+          { opacity: server.mounted === true ? 1 : 0.5 },
+        ),
+        h(Switch, {
+          checked: server.enabled,
+          title: server.enabled ? t('disabled') : t('enabled'),
+          onChange: () => handlers.onToggle(),
+        }),
+        h('button', {
+          type: 'button',
+          title: pending ? t('confirmRemove') : t('remove'),
+          onClick: (event) => { event.stopPropagation(); handlers.onRemove() },
+          style: {
+            ...iconButtonStyle,
+            width: 'auto', padding: pending ? '0 10px' : 0,
+            color: pending ? '#e5484d' : 'inherit',
+            opacity: pending ? 1 : 0.6,
+          },
+        }, h(TrashGlyph, { size: 16 }), pending ? h('span', { style: { fontSize: 12 } }, t('confirmRemove')) : null))),
+
+      probe === undefined || probe.busy === true
+        ? null
+        : h('div', {
+          style: {
+            marginTop: 10, fontSize: 12, whiteSpace: 'pre-wrap',
+            color: probe.reachable === true ? '#30a46c' : '#e5484d',
+          },
+        }, `${probe.reachable === true ? t('reachable') : t('unreachable')} — ${probe.detail ?? ''}`),
+
+      trial === undefined
+        ? null
+        : h('div', { style: { marginTop: 12, borderTop: border, paddingTop: 12 } },
+          h('div', { style: { fontSize: 12, opacity: 0.7, marginBottom: 10 } }, t('trialHint')),
+          (server.tools ?? []).length === 0
+            ? h('div', { style: { fontSize: 12, opacity: 0.6 } }, t('trialNoTools'))
+            : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+              h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialTool'),
+                h('select', {
+                  style: { ...fieldStyle, marginTop: 4 },
+                  value: trial.toolName,
+                  onChange: event => handlers.onTrialChange({ ...trial, toolName: event.target.value }),
+                }, (server.tools ?? []).map(toolName =>
+                  h('option', { key: toolName, value: toolName }, toolName)))),
+              h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialArgs'),
+                h('textarea', {
+                  style: { ...fieldStyle, marginTop: 4, minHeight: 60, fontFamily: 'ui-monospace, monospace' },
+                  value: trial.args,
+                  onChange: event => handlers.onTrialChange({ ...trial, args: event.target.value }),
+                })),
+              h('div', { style: { display: 'flex', gap: 8 } },
+                h('button', {
+                  style: { ...buttonStyle, fontWeight: 600, opacity: trialBusy ? 0.6 : 1 },
+                  disabled: trialBusy,
+                  onClick: () => { void handlers.onTrialRun() },
+                }, trialBusy ? t('trialRunning') : t('trialRun')),
+                h('button', { style: buttonStyle, onClick: () => handlers.onTrialClose() }, t('cancel'))),
+              trialResult === undefined
+                ? null
+                : h('div', null,
+                  h('div', { style: { fontSize: 12, opacity: 0.7, marginBottom: 4 } },
+                    `${t('trialResult')}${trialResult.durationMs === undefined ? '' : ` · ${trialResult.durationMs}ms`}${trialResult.isError === true ? ' · error' : ''}`),
+                  h('pre', {
+                    style: {
+                      margin: 0, padding: 10, borderRadius: 8, border, background: subtle,
+                      fontSize: 11, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap',
+                    },
+                  }, trialResult.resultJson ?? '')))))
+    }
+
+    /**
+     * Read the current session id from the sessions store face (structural:
+     * only the leaf this page needs is read, so a store-shape change across
+     * harness lines degrades to "no session" instead of throwing).
+     * @param sessions - the sessions service face.
+     * @returns the current session id, or undefined.
+     */
+    function currentSessionId(sessions) {
+      try {
+        const list = sessions?.list
+        const getSnapshot = list?.getSnapshot
+        if (typeof getSnapshot !== 'function') return undefined
+        const current = getSnapshot().current
+        return typeof current === 'string' ? current : undefined
+      } catch {
+        return undefined
+      }
     }
 
     /**
@@ -379,6 +686,8 @@ window.__ModuleLoader__.load({
       const [trial, setTrial] = useState(undefined)
       const [trialResult, setTrialResult] = useState(undefined)
       const [trialBusy, setTrialBusy] = useState(false)
+      const [query, setQuery] = useState('')
+      const [scopeFilter, setScopeFilter] = useState('all')
 
       const refresh = useCallback(async () => {
         try {
@@ -397,8 +706,21 @@ window.__ModuleLoader__.load({
         return path => index.get(path) ?? path
       }, [workspaces])
 
+      const servers = state?.servers ?? []
+      const needle = query.trim().toLowerCase()
+      const matches = (server) => needle === ''
+        || server.serverName.toLowerCase().includes(needle)
+        || (server.transport === 'stdio'
+          ? `${server.command ?? ''} ${(server.args ?? []).join(' ')}`
+          : server.url ?? '').toLowerCase().includes(needle)
+      // The toolbar count answers the scope filter alone; the section count also
+      // answers the search box, so the two differ only while searching.
+      const inScope = servers.filter(server => scopeFilter === 'all' || server.scope === scopeFilter)
+      const visible = inScope.filter(matches)
+
       const run = async (work) => {
         try {
+          setPending('')
           await work()
           await refresh()
         } catch (error) {
@@ -452,162 +774,153 @@ window.__ModuleLoader__.load({
           }))
       }
 
+      const scopeOptions = [
+        h('option', { key: 'all', value: 'all' }, t('scopeAll')),
+        h('option', { key: 'global', value: 'global' }, t('global')),
+        // Registered workspaces first, then any other scope a server already
+        // stores: a scope survives its workspace leaving the registry, and a
+        // filter that could not reach it would hide the server.
+        ...[...new Set([
+          ...workspaces.map(workspace => workspace.path),
+          ...servers.map(server => server.scope).filter(scope => scope !== 'global'),
+        ])].map(path =>
+          h('option', { key: path, value: path }, `${t('workspace')} · ${titleOf(path)}`)),
+      ]
+
       return h('div', { style: { padding: '4px 2px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 } },
-          h('div', { style: { fontSize: 20, fontWeight: 600 } }, t('title')),
-          h('div', { style: { display: 'flex', gap: 10 } },
-            h('button', { style: buttonStyle, onClick: () => { void refresh() } }, t('reload')),
-            h('button', { style: primaryStyle, onClick: () => setForm(null) }, t('add')))),
-        h('div', { style: { fontSize: 13, opacity: 0.65, marginBottom: 8 } }, t('intro')),
-        h('div', { style: { fontSize: 11, opacity: 0.45, marginBottom: 20, fontFamily: 'ui-monospace, monospace' } },
-          `${t('storeAt')}: ${state?.storePath ?? '…'}`),
+        h('div', { style: { fontSize: 24, fontWeight: 650, marginBottom: 16 } }, t('title')),
+
+        // ── scope selector · count · search ──────────────────────────────────
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 22 } },
+          h('div', {
+            style: {
+              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+              border, borderRadius: 999, opacity: 0.9,
+            },
+          },
+          h(ScreenGlyph, { size: 15 }),
+          h('select', {
+            style: {
+              border: 'none', background: 'transparent', color: 'inherit', font: 'inherit',
+              fontSize: 13, outline: 'none', cursor: 'pointer', maxWidth: 220,
+            },
+            value: scopeFilter,
+            onChange: event => setScopeFilter(event.target.value),
+          }, scopeOptions)),
+          h('div', { style: { fontSize: 13, opacity: 0.75 } },
+            `${t('count')} ${state === undefined ? 0 : inScope.length}`),
+          h('div', { style: { flex: '1 1 180px', minWidth: 0, display: 'flex', justifyContent: 'flex-end' } },
+            h('div', {
+              style: {
+                display: 'inline-flex', alignItems: 'center', gap: 8, padding: '7px 12px',
+                border, borderRadius: 999, background: subtle, width: '100%', maxWidth: 340, minWidth: 0,
+              },
+            },
+            h('span', { style: { opacity: 0.5, display: 'flex' } }, h(SearchGlyph, { size: 15 })),
+            h('input', {
+              style: {
+                border: 'none', background: 'transparent', color: 'inherit', font: 'inherit',
+                fontSize: 13, outline: 'none', width: '100%', minWidth: 0,
+              },
+              value: query,
+              placeholder: t('search'),
+              onChange: event => setQuery(event.target.value),
+            })))),
 
         failure === ''
           ? null
           : h('div', { style: { color: '#e5484d', fontSize: 13, marginBottom: 14 } }, `${t('errorPrefix')}: ${failure}`),
 
+        // ── installed ────────────────────────────────────────────────────────
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 } },
+          h('div', { style: { fontSize: 13, fontWeight: 600, opacity: 0.85 } },
+            `${t('installed')} ${visible.length} ${t('items')}`.trim()),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('button', {
+              type: 'button', title: t('reload'), style: iconButtonStyle,
+              onClick: () => { void refresh() },
+            }, h(RefreshGlyph, { size: 15 })),
+            h('button', {
+              type: 'button',
+              style: { ...buttonStyle, display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 },
+              onClick: () => setForm(null),
+            }, h(PlusGlyph, { size: 15 }), t('newServer')))),
+
         state === undefined
           ? h('div', { style: { opacity: 0.6, fontSize: 13 } }, t('loading'))
-          : state.servers.length === 0
-            ? h('div', { style: { opacity: 0.6, fontSize: 13 } }, t('empty'))
-            : state.servers.map(server => {
-              const isGlobal = server.scope === 'global'
-              const badge = isGlobal ? t('global') : `${t('workspace')} · ${titleOf(server.scope)}`
-              return h('div', {
-                key: server.serverName,
-                style: {
-                  border, borderRadius: 12, padding: '14px 16px', marginBottom: 12,
-                  opacity: server.enabled ? 1 : 0.55,
+          : visible.length === 0
+            ? h('div', { style: { opacity: 0.6, fontSize: 13, padding: '10px 0 18px' } },
+              servers.length === 0 ? t('empty') : t('emptyFiltered'))
+            : visible.map(server => h(ServerRow, {
+              key: server.serverName,
+              t,
+              server,
+              titleOf,
+              probe: probes[server.serverName],
+              pending: pending === server.serverName,
+              trial: trial?.serverName === server.serverName ? trial : undefined,
+              trialResult: trial?.serverName === server.serverName ? trialResult : undefined,
+              trialBusy,
+              handlers: {
+                onEdit: () => setForm(server),
+                onToggle: () => { void run(() => toggle(server.serverName, !server.enabled)) },
+                onProbe: () => { void runProbe(server.serverName) },
+                onTrial: () => openTrial(server),
+                onTrialChange: (next) => setTrial(next),
+                onTrialRun: () => runTrial(),
+                onTrialClose: () => { setTrial(undefined); setTrialResult(undefined) },
+                onRemove: () => {
+                  if (pending !== server.serverName) {
+                    setPending(server.serverName)
+                    return
+                  }
+                  void run(() => remove(server.serverName))
                 },
               },
-              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } },
-                h('div', { style: { minWidth: 0 } },
-                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                    h('span', { style: { fontWeight: 600 } }, server.serverName),
-                    h('span', { style: { fontSize: 11, padding: '2px 8px', borderRadius: 999, border, opacity: 0.8 } }, badge),
-                    h('span', { style: { fontSize: 11, opacity: 0.55 } }, server.transport),
-                    h('span', {
-                      style: {
-                        fontSize: 11, opacity: 0.7,
-                        color: server.mounted ? '#30a46c' : undefined,
-                      },
-                    }, server.enabled ? (server.mounted ? `● ${t('mounted')}` : `○ ${t('mountFailed')}`) : `○ ${t('disabled')}`),
-                    server.mounted
-                      ? h('span', { style: { fontSize: 11, opacity: 0.55 } },
-                        `${server.sessions ?? 0} ${t('sessions')}`)
-                      : null),
-                  h('div', {
-                    style: {
-                      fontSize: 12, opacity: 0.55, marginTop: 6,
-                      fontFamily: 'ui-monospace, monospace',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    },
-                  }, server.transport === 'stdio'
-                    ? `${server.command} ${(server.args ?? []).join(' ')}`
-                    : server.url),
-                  server.mountError === null || server.mountError === undefined
-                    ? null
-                    : h('div', { style: { fontSize: 12, color: '#e5484d', marginTop: 6 } }, server.mountError)),
-                h('div', { style: { display: 'flex', gap: 8, flexShrink: 0 } },
-                  h('button', {
-                    style: buttonStyle,
-                    disabled: probes[server.serverName]?.busy === true,
-                    onClick: () => { void runProbe(server.serverName) },
-                  }, probes[server.serverName]?.busy === true ? t('probing') : t('probe')),
-                  h('button', {
-                    style: buttonStyle,
-                    disabled: server.mounted !== true,
-                    onClick: () => openTrial(server),
-                  }, t('trial')),
-                  h('button', {
-                    style: buttonStyle,
-                    onClick: () => { void run(() => toggle(server.serverName, !server.enabled)) },
-                  }, server.enabled ? t('disabled') : t('enabled')),
-                  h('button', { style: buttonStyle, onClick: () => setForm(server) }, t('edit')),
-                  h('button', {
-                    style: { ...buttonStyle, color: pending === server.serverName ? '#e5484d' : 'inherit' },
-                    onClick: () => {
-                      if (pending !== server.serverName) {
-                        setPending(server.serverName)
-                        return
-                      }
-                      setPending('')
-                      void run(() => remove(server.serverName))
-                    },
-                  }, pending === server.serverName ? t('confirmRemove') : t('remove')))),
+            })),
 
-              probes[server.serverName] === undefined
-                ? null
-                : h('div', {
-                  style: {
-                    marginTop: 10, fontSize: 12, whiteSpace: 'pre-wrap',
-                    color: probes[server.serverName].reachable === true ? '#30a46c' : '#e5484d',
-                  },
-                }, probes[server.serverName].busy === true
-                  ? t('probing')
-                  : `${probes[server.serverName].reachable === true ? t('reachable') : t('unreachable')} — ${probes[server.serverName].detail ?? ''}`),
-
-              trial === undefined || trial.serverName !== server.serverName
-                ? null
-                : h('div', { style: { marginTop: 12, borderTop: border, paddingTop: 12 } },
-                  h('div', { style: { fontSize: 12, opacity: 0.7, marginBottom: 10 } }, t('trialHint')),
-                  (server.tools ?? []).length === 0
-                    ? h('div', { style: { fontSize: 12, opacity: 0.6 } }, t('trialNoTools'))
-                    : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-                      h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialTool'),
-                        h('select', {
-                          style: { ...fieldStyle, marginTop: 4 },
-                          value: trial.toolName,
-                          onChange: event => setTrial({ ...trial, toolName: event.target.value }),
-                        }, (server.tools ?? []).map(name => h('option', { key: name, value: name }, name)))),
-                      h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialArgs'),
-                        h('textarea', {
-                          style: { ...fieldStyle, marginTop: 4, minHeight: 60, fontFamily: 'ui-monospace, monospace' },
-                          value: trial.args,
-                          onChange: event => setTrial({ ...trial, args: event.target.value }),
-                        })),
-                      h('div', { style: { display: 'flex', gap: 8 } },
-                        h('button', {
-                          style: { ...primaryStyle, opacity: trialBusy ? 0.6 : 1 },
-                          disabled: trialBusy,
-                          onClick: () => { void runTrial() },
-                        }, trialBusy ? t('trialRunning') : t('trialRun')),
-                        h('button', {
-                          style: buttonStyle,
-                          onClick: () => { setTrial(undefined); setTrialResult(undefined) },
-                        }, t('cancel'))),
-                      trialResult === undefined
-                        ? null
-                        : h('div', null,
-                          h('div', { style: { fontSize: 12, opacity: 0.7, marginBottom: 4 } },
-                            `${t('trialResult')}${trialResult.durationMs === undefined ? '' : ` · ${trialResult.durationMs}ms`}${trialResult.isError === true ? ' · error' : ''}`),
-                          h('pre', {
-                            style: {
-                              margin: 0, padding: 10, borderRadius: 8, border, background: subtle,
-                              fontSize: 11, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap',
-                            },
-                          }, trialResult.resultJson ?? '')))))
-            }),
+        h('div', { style: { fontSize: 11, opacity: 0.45, marginTop: 18, lineHeight: 1.7 } },
+          h('div', { style: { fontFamily: 'ui-monospace, monospace' } }, `${t('storeAt')}: ${state?.storePath ?? '…'}`),
+          h('div', null, t('footerHint'))),
       )
     }
 
     /**
-     * Read the current session id from the sessions store face (structural:
-     * only the leaf this page needs is read, so a store-shape change across
-     * harness lines degrades to "no session" instead of throwing).
-     * @param sessions - the sessions service face.
-     * @returns the current session id, or undefined.
+     * Open the Session a server command ran in, then re-read the baseline.
+     *
+     * A command issued from a Session the panel has not opened appends its rows
+     * to that Session's log without moving the panel there, and the host's
+     * blankness verdict for a command-only Session only reaches the client
+     * mirror through a refresh. Without both, the person sees the sidebar mark
+     * the Session running and nothing else.
+     *
+     * @param ctx - the client plugin context.
+     * @returns the event disposer.
      */
-    function currentSessionId(sessions) {
-      try {
-        const list = sessions?.list
-        const getSnapshot = list?.getSnapshot
-        if (typeof getSnapshot !== 'function') return undefined
-        const current = getSnapshot().current
-        return typeof current === 'string' ? current : undefined
-      } catch {
-        return undefined
+    function followServerCommands(ctx) {
+      let names = new Set()
+      const refresh = async () => {
+        try {
+          const state = await request('GET', '/state')
+          names = new Set((state.servers ?? []).map(server => server.commandName).filter(name => name !== null))
+        } catch {
+          // A failed refresh costs only the redirects until the next command.
+        }
       }
+      void refresh()
+      return ctx.on('command/executed', (sessionId, name) => {
+        if (!names.has(name)) {
+          void refresh()
+          return
+        }
+        try {
+          ctx.get('uiWorkspace')?.openSession?.(sessionId)
+          void ctx.get('sessions')?.refresh?.()
+        } catch {
+          // Navigation is best-effort: the command already ran and the Session
+          // stays reachable from the sidebar.
+        }
+      })
     }
 
     /** Services the page reads. */
@@ -619,6 +932,7 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-mcp-scope: dictionaries')
+      ctx.effect(() => followServerCommands(ctx), 'dsh-mcp-scope: follow server commands')
       const t = ctx.locale.bind(NS)
       const sessionId = () => currentSessionId(ctx.get('sessions'))
       const injected = () => ({

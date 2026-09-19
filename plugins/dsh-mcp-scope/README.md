@@ -20,6 +20,25 @@ Every enabled server is mounted **once** on the root context through the officia
 
 Tools are therefore hidden from the model, not merely discouraged. Servers stay connected; only visibility is scoped.
 
+## The Settings page
+
+The toolbar's scope selector narrows the list to one scope and its count follows that filter, while the section count also answers the search box — which matches a server's name and, for a stdio server, its command line — so the two differ only while searching. Each row shows the server's transport, its `/name` command, scope, connection state, and tool count as chips, its command or URL, a **探测** button that completes a real MCP handshake, a **试用** button that opens the tool console, a switch for the enable flag, and a delete button that arms on the first click and deletes on the second. Clicking the row body opens the editor.
+
+## Waking a server with `/`
+
+An MCP server is a set of tools, not an agent, so "waking it" means giving it a worker that can call **that server and nothing else**:
+
+```
+/memory 把这个事实记进知识图谱：丁寒喜欢用 DSH。
+```
+
+Every visible server is a slash command named after it — the `/` menu lists the server with that description, and the command is scoped like the server, so a Session only offers the servers inside its own scope. Running it starts a continuable delegated child whose `toolFilter.allow` is exactly the server's `mcp__<server>__*` namespace, so the child cannot read files, run commands, or reach another server. Its result then returns to the Session that issued the command and wakes that Session's agent, exactly as any other delegation does. Nothing calls the model directly from the command: the command returns as soon as the child accepts its prompt.
+
+Two consequences:
+
+- **A server whose name is not a valid command name gets no command.** The registry accepts lowercase names only (`[a-z][a-z0-9_-]*`), so a server named `Memory` or `2fa` keeps its tools but is not invocable; the page marks that row. A name that another command already uses is marked as a conflict, because a Session-scoped command shadows the global one of the same name.
+- **A server with no registered tools cannot be woken.** The child's filter names tools, so a server that is still connecting, or that failed to start, returns an error telling you to probe it first.
+
 ## Storage
 
 Servers live in `$DSH_HOME/mcp-scope.json` (override with `storePath` in the plugin config), written atomically:

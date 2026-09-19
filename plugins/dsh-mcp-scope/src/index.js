@@ -47,6 +47,15 @@ const GUARD_HEADER = 'x-dsh-mcp-scope'
 /** Tool-name prefix the official MCP client registers under. */
 const TOOL_PREFIX = 'mcp__'
 
+/**
+ * Command-name contract shared with the human-command registry.
+ *
+ * A server name is used verbatim as its slash command, and the registry accepts
+ * lowercase names only, so a server named with capitals keeps its tools but
+ * gets no command.
+ */
+const COMMAND_NAME_PATTERN = /^[a-z][a-z0-9_-]*$/u
+
 /** Cap on one request body, in bytes. */
 const MAX_BODY_BYTES = 256 * 1024
 
@@ -194,6 +203,21 @@ function toClientConfig(server) {
 }
 
 /**
+ * The mounted-configuration signature of one server.
+ *
+ * A disabled server signs as `disabled` rather than as its own client config:
+ * the config of an enabled and a disabled server is otherwise identical, so a
+ * signature that ignored the flag would make reconciliation treat a disabled
+ * mount as current and leave its tools registered.
+ *
+ * @param server - the stored server record.
+ * @returns the signature string.
+ */
+function signatureOf(server) {
+  return server.enabled ? JSON.stringify(toClientConfig(server)) : 'disabled'
+}
+
+/**
  * Replace one server's credential values with their key names for the page.
  *
  * A stdio `env` and an http `headers` map routinely hold bearer tokens. The
@@ -297,6 +321,8 @@ class ScopeRuntime {
     this.agents = new Map()
     /** @type {Map<string, string>} */
     this.mountErrors = new Map()
+    /** @type {Map<string, { signature: string, fiber: unknown }>} */
+    this.commands = new Map()
   }
 
   /**
@@ -322,7 +348,7 @@ class ScopeRuntime {
     }
     for (const [serverName, mount] of [...this.mounts]) {
       const server = wanted.get(serverName)
-      const signature = server === undefined ? undefined : JSON.stringify(toClientConfig(server))
+      const signature = server === undefined ? undefined : signatureOf(server)
       if (server !== undefined && mount.signature === signature) continue
       // Awaiting matters: the official client reserves `serverName` per scope,
       // so remounting before the old fiber released it makes the new apply fail
@@ -346,7 +372,7 @@ class ScopeRuntime {
     const config = toClientConfig(server)
     try {
       const fiber = this.ctx.plugin(mcpClient, config)
-      this.mounts.set(server.serverName, { fiber, signature: JSON.stringify(config) })
+      this.mounts.set(server.serverName, { fiber, signature: signatureOf(server) })
       this.mountErrors.delete(server.serverName)
       // `ctx.plugin` does not throw when the plugin refuses to apply: it parks
       // the rejection in the fiber. Without observing it a server that never
@@ -401,11 +427,12 @@ class ScopeRuntime {
   }
 
   /**
-   * Forget one agent and lift its mask.
+   * Forget one agent, lift its mask, and drop its commands.
    * @param agent - the disposed agent.
    */
   removeAgent(agent) {
     this.agents.delete(agent.id)
+    this.#dropCommands(agent.id)
     const mask = this.masks.get(agent.id)
     if (mask === undefined) return
     this.masks.delete(agent.id)
@@ -444,6 +471,7 @@ class ScopeRuntime {
     const record = this.agents.get(agent.id)
     const deny = []
     const visible = []
+    const visibleRecords = []
     try {
       const cwd = typeof agent.session?.header?.cwd === 'string' ? canonical(agent.session.header.cwd) : ''
       if (record !== undefined) record.cwd = cwd
@@ -451,6 +479,7 @@ class ScopeRuntime {
         if (!this.mounts.has(server.serverName)) continue
         if (server.scope === GLOBAL_SCOPE || inScope(cwd, server.scope)) {
           visible.push(server.serverName)
+          visibleRecords.push(server)
           continue
         }
         deny.push(...this.toolNames(server.serverName))
@@ -464,6 +493,19 @@ class ScopeRuntime {
       record.visible = visible
       record.denied = deny
     }
+    this.#applyMask(agent, deny)
+    // Command registration is driven by the visible set, which changes without
+    // the deny list changing (a newly mounted in-scope server adds no denial),
+    // so it runs on every sweep rather than behind the mask's own early return.
+    this.#applyCommands(agent, visibleRecords)
+  }
+
+  /**
+   * Install one agent's deny mask, replacing the previous one.
+   * @param agent - the agent to mask.
+   * @param deny - out-of-scope MCP tool names.
+   */
+  #applyMask(agent, deny) {
     const previous = this.masks.get(agent.id)
     if (previous !== undefined && previous.deny.length === deny.length
       && previous.deny.every(name => deny.includes(name))) {
@@ -494,6 +536,128 @@ class ScopeRuntime {
       }
     }
     if (next !== undefined) this.masks.set(agent.id, { lift: next, deny })
+  }
+
+  /**
+   * Register one agent's slash commands, one per visible MCP server.
+   *
+   * Registration through a child of the agent's own context is what scopes the
+   * command: the registry resolves a definition's layer from the calling
+   * context's scope key, so a server outside this Session is absent from its `/`
+   * menu instead of failing when invoked. A server whose name cannot be a
+   * command name (the registry accepts lowercase only) keeps its tools but gets
+   * no command, which the Settings page reports.
+   *
+   * @param agent - the agent whose composer to extend.
+   * @param servers - server records inside that agent's scope.
+   */
+  #applyCommands(agent, servers) {
+    const usable = servers.filter(server => COMMAND_NAME_PATTERN.test(server.serverName))
+    const signature = usable.map(server => server.serverName).join('\u0001')
+    const previous = this.commands.get(agent.id)
+    if (previous !== undefined && previous.signature === signature) return
+    this.#dropCommands(agent.id)
+    if (usable.length === 0) return
+    try {
+      const fiber = agent.ctx.inject(['commands'], (scope) => {
+        for (const server of usable) {
+          scope.commands.register(this.#commandFor(server.serverName))
+        }
+      })
+      this.commands.set(agent.id, { signature, fiber })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger?.warn?.(`mcp-scope: agent ${agent.id} commands not registered: ${message}`)
+    }
+  }
+
+  /**
+   * Drop one agent's command registrations.
+   * @param agentId - the agent whose registrations to release.
+   */
+  #dropCommands(agentId) {
+    const previous = this.commands.get(agentId)
+    if (previous === undefined) return
+    this.commands.delete(agentId)
+    try {
+      previous.fiber?.dispose?.()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger?.warn?.(`mcp-scope: agent ${agentId} command release failed: ${message}`)
+    }
+  }
+
+  /**
+   * Build the slash command that works one server for a task.
+   * @param serverName - the mounted server's name.
+   * @returns the command registration.
+   */
+  #commandFor(serverName) {
+    return {
+      definitionId: `mcp-scope:${serverName}`,
+      name: serverName,
+      description: `用 MCP 服务器「${serverName}」完成任务（它只能调用这个服务器的工具）`,
+      // The hint becomes the composer's placeholder once a menu pick claims this
+      // command, which is where a person learns the task still has to be typed.
+      input: { hint: '任务描述，再按回车运行' },
+      handler: (invocation) => this.runFromCommand(serverName, invocation),
+    }
+  }
+
+  /**
+   * Start one continuable child limited to one server's tools.
+   *
+   * The child is a real delegated Session, so the run ends the way every other
+   * delegation does: its settlement notice returns the result to the receiving
+   * Session and wakes that Session's agent to continue from it. The tool filter
+   * is the server's whole namespace, which is what makes this "wake the MCP
+   * server" rather than "wake a sub-agent": the child can call those tools and
+   * nothing else.
+   *
+   * @param serverName - the server to work through.
+   * @param invocation - the human command invocation.
+   * @returns the command outcome rendered by the composer.
+   */
+  async runFromCommand(serverName, invocation) {
+    const server = this.serverByName(serverName)
+    if (server === undefined) return { kind: 'error', text: `MCP 服务器「${serverName}」已不存在。` }
+    if (!server.enabled || !this.mounts.has(serverName)) {
+      return { kind: 'error', text: `MCP 服务器「${serverName}」当前未装载，先在「设置 → MCP 服务器」启用它。` }
+    }
+    const task = String(invocation.rawInput ?? '').trim()
+    if (task === '') return { kind: 'error', text: `用法：/${serverName} <任务>` }
+    const tools = this.toolNames(serverName)
+    if (tools.length === 0) {
+      return {
+        kind: 'error',
+        text: `MCP 服务器「${serverName}」还没有注册任何工具，可能仍在连接或启动失败；先在这个页面上「探测」它。`,
+      }
+    }
+    const subagents = this.ctx.get('subagents')
+    if (subagents === undefined || typeof subagents.startContinuable !== 'function') {
+      return { kind: 'error', text: '当前组合没有装载可续聊的子智能体服务，无法运行。' }
+    }
+    let started
+    try {
+      started = await subagents.startContinuable({
+        provider: 'spawn',
+        label: `${serverName} MCP`,
+        request: {
+          prompt: [{ type: 'text', text: task }],
+          parent: invocation.agent,
+          toolFilter: { allow: [...tools] },
+        },
+        signal: invocation.signal,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { kind: 'error', text: `启动「${serverName}」的 MCP 子代理失败：${message}` }
+    }
+    const childId = typeof started?.childId === 'string' ? started.childId : ''
+    return {
+      kind: 'success',
+      text: `已启动 MCP 子代理（${serverName}${childId === '' ? '' : `，${childId}`}），它只能调用这个服务器的 ${tools.length} 个工具。完成后结果会作为通知回到这个会话。`,
+    }
   }
 
   /**
@@ -543,6 +707,39 @@ class ScopeRuntime {
   }
 
   /**
+   * Command names already registered for a live session, excluding this plugin's.
+   *
+   * A server-scoped command legally shadows a global one of the same name, so
+   * the page reports the collision instead of letting `/plan` quietly become a
+   * server. Read from each live agent's effective view, which covers global and
+   * other-plugin scoped registrations; with no live session the set is empty.
+   *
+   * @returns the names in use by other registrations.
+   */
+  commandNamesInUse() {
+    const own = new Set(this.store.servers.map(server => server.serverName))
+    const names = new Set()
+    let commands
+    try {
+      commands = this.ctx.get('commands')
+    } catch {
+      commands = undefined
+    }
+    if (commands === undefined || typeof commands.list !== 'function') return names
+    for (const record of this.agents.values()) {
+      try {
+        for (const descriptor of commands.list(record.agent)) {
+          if (!own.has(descriptor?.name)) names.add(descriptor.name)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.ctx.logger?.warn?.(`mcp-scope: command listing for agent ${record.agent.id} failed: ${message}`)
+      }
+    }
+    return names
+  }
+
+  /**
    * One line per live session, for the page's scope diagnostics.
    *
    * The session id is withheld: the page never needs it (it reads its own
@@ -559,7 +756,7 @@ class ScopeRuntime {
     }))
   }
 
-  /** Drop every mount and mask. */
+  /** Drop every mount, mask, and command. */
   dispose() {
     for (const agentId of [...this.masks.keys()]) {
       const mask = this.masks.get(agentId)
@@ -570,7 +767,8 @@ class ScopeRuntime {
         // Disposal runs while the tree collapses; a failing lift is already inert.
       }
     }
-    for (const serverName of [...this.mounts.keys()]) this.#unmount(serverName)
+    for (const agentId of [...this.commands.keys()]) this.#dropCommands(agentId)
+    for (const serverName of [...this.mounts.keys()]) void this.#unmount(serverName)
     this.agents.clear()
   }
 }
@@ -867,6 +1065,12 @@ export async function apply(ctx, config) {
                 mountError: runtime.mountErrors.get(server.serverName) ?? null,
                 sessions: counts.get(server.serverName) ?? 0,
                 tools: runtime.toolNames(server.serverName),
+                // The command name is the server name, and the registry accepts
+                // lowercase only; a collision means the command would shadow an
+                // existing one for every Session in scope.
+                commandName: COMMAND_NAME_PATTERN.test(server.serverName) ? server.serverName : null,
+                commandConflict: COMMAND_NAME_PATTERN.test(server.serverName)
+                  && runtime.commandNamesInUse().has(server.serverName),
               })),
               liveSessions: runtime.sessionSummaries(),
               probeTool: ctx.tools.schemas().some(schema => schema?.name === 'mcp_probe'),
