@@ -169,21 +169,24 @@ jobs:
           case "$version" in *-*) ;; *) flavor=--latest ;; esac
           mapfile -t files < <(find packages -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) | sort)
           if [ ${#files[@]} -eq 0 ]; then echo "no package files to publish" >&2; exit 1; fi
-          {
-            echo "未签名测试包 / Unsigned test packages."
-            echo
-            echo "- macOS (Apple Silicon): ad-hoc signed, not notarized. First launch: Control-click → Open, or \`xattr -dr com.apple.quarantine \"/Applications/DeepSeek Harness.app\"\`."
-            echo "- Windows x64: unsigned NSIS installer. On the SmartScreen prompt choose 更多信息 → 仍要运行 (More info → Run anyway)."
-            echo "- Neither package carries automatic-update configuration; use the signed release flow for distribution."
-            echo
-            echo '```'
-            sha256sum "${files[@]}"
-            echo '```'
-          } > release-notes.md
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${files[@]}" --clobber
-            gh release edit "$tag" --notes-file release-notes.md
           else
             gh release create "$tag" "${files[@]}" $flavor --target "$GITHUB_SHA" \
-              --title "DeepSeek Harness Desktop ${version} (unsigned)" --notes-file release-notes.md
+              --title "DeepSeek Harness Desktop ${version} (unsigned)" --notes "unsigned packages"
+          fi
+          # The notes carry one checksum per platform, so a partial run leaves them alone.
+          if [ ${#files[@]} -eq 3 ]; then
+            {
+              echo "未签名测试包 / Unsigned test packages."
+              echo
+              echo "- macOS (Apple Silicon): ad-hoc signed, not notarized. First launch: Control-click → Open, or \`xattr -dr com.apple.quarantine \"/Applications/DeepSeek Harness.app\"\`."
+              echo "- Windows x64: unsigned NSIS installer. On the SmartScreen prompt choose 更多信息 → 仍要运行 (More info → Run anyway)."
+              echo "- Neither package carries automatic-update configuration; use the signed release flow for distribution."
+              echo
+              echo '```'
+              ( cd packages && sha256sum *.dmg *.zip *.exe )
+              echo '```'
+            } > release-notes.md
+            gh release edit "$tag" --notes-file release-notes.md
           fi
