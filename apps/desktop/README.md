@@ -202,6 +202,8 @@ Every unsigned command writes to `.desktop-build/targets/<target>/unsigned-artif
 
 An unsigned macOS application is ad-hoc signed, which keeps its embedded native executables loadable on Apple Silicon, but it carries no Developer ID authority and no notarization ticket. Gatekeeper therefore refuses its first launch: open the application through Control-click → Open, or clear the quarantine attribute of the installed copy with `xattr -dr com.apple.quarantine`. Distributing the package to other people requires the signed commands, and unsigned artifacts remain ineligible for upload.
 
+The [unsigned packaging workflow](../../.github/workflows/desktop-unsigned.yml) runs the same commands on hosted macOS and Windows runners and publishes the installers as assets of the `desktop-v<version>` GitHub release, separate from the npm `dsh-v` release tags.
+
 ### Windows installer interface
 
 The Windows installer uses native NSIS pages with light and dark palettes, system shadows, an editable installation directory, and a finish page whose launch checkbox is selected by default. Installation is restricted to the current user. Clicking Install or pressing Enter validates the current path; new destinations must be empty, and nonempty destinations must be registered installations. Running executables at the affected installation path produce a native prompt and remain running; same-named applications in other directories do not block installation. Silent updates wait up to ten seconds for the affected application to exit, then stop with exit code 2 if it is still running.

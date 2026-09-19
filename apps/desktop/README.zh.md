@@ -203,6 +203,8 @@ pnpm run package:desktop:win:x64:unsigned
 
 未签名 macOS 应用采用 ad-hoc 签名，其内置原生可执行文件因此仍可在 Apple Silicon 上加载，但它既没有 Developer ID 权威签名，也没有公证票据。Gatekeeper 会拒绝其首次启动：请通过按住 Control 点击 → 打开，或对已安装副本执行 `xattr -dr com.apple.quarantine` 清除隔离属性。向他人分发该安装包仍需使用签名命令，未签名产物也不能上传发布。
 
+[未签名打包工作流](../../.github/workflows/desktop-unsigned.yml)在托管 macOS 与 Windows runner 上执行相同命令，并把安装包发布为 `desktop-v<version>` GitHub Release 的资产，与 npm 的 `dsh-v` 发布标签相互独立。
+
 ### Windows 安装界面
 
 Windows 安装程序使用原生 NSIS 页面，提供亮暗配色、系统阴影、可编辑的安装目录，以及默认勾选立即启动的完成页。安装仅面向当前用户。点击安装或按 Enter 均校验当前路径；新安装位置必须为空，非空位置必须是已登记的安装目录。受影响安装路径中的程序运行时显示系统提示，并保持应用运行；其他目录中的同名应用不阻止安装。静默更新最多等待受影响应用退出十秒，若仍在运行则以退出码 2 结束。
