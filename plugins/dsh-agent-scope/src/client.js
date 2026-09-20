@@ -3,9 +3,10 @@
  * sub-agents.
  *
  * Shipped as a Dynamic Client bundle without a build step: the factory takes
- * `react` from the platform module table and builds every element with
- * `createElement`, so the file in `src/` is the file a reviewer reads. Icons are
- * inline SVG for the same reason: the bundle resolves nothing but `react`.
+ * `react` and the shared `@deepseek-ai/dsh-client-ui-primitives` from the
+ * platform module table and builds every element with `createElement`, so the
+ * file in `src/` is the file a reviewer reads. Other icons are inline SVG for
+ * the same reason: the bundle resolves nothing else.
  *
  * The page talks to the host half over the same-origin `/agent-scope/api`
  * routes and always sends the `x-dsh-agent-scope` header the host requires.
@@ -18,6 +19,11 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
     const React = require('react')
+    // The dropdown trigger's chevron and list come from the shared primitives:
+    // `Menu` is the control every other Settings row opens, and the module table
+    // seeds the package for dynamic bundles, so no build step or manifest entry
+    // is needed to reach it.
+    const { IconChevronDownOutline14, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useState } = React
@@ -178,6 +184,10 @@ window.__ModuleLoader__.load({
       fontSize: 11, padding: '2px 8px', borderRadius: 6, border: softBorder,
       opacity: 0.75, whiteSpace: 'nowrap',
     }
+    const selectStyle = {
+      ...fieldStyle, display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 8, textAlign: 'left', cursor: 'pointer',
+    }
 
     /**
      * One inline SVG glyph.
@@ -251,6 +261,67 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * One dropdown: the shared `Menu` primitive opened from a pill trigger.
+     *
+     * This replaces the native `<select>` the page used to render. A native
+     * popup is drawn by the operating system from its own palette and cannot
+     * follow the application theme, so in the dark theme the highlighted row
+     * came out as white text on a light row and the options could not be read.
+     * `Menu` is the control the rest of the Settings surface uses, and its
+     * keyboard traversal and outside-click dismissal come with it.
+     *
+     * The twin of this component lives in `plugins/dsh-mcp-scope/src/client.js`:
+     * a Dynamic Client bundle is one file, so neither can import the other.
+     * This one also renders heading rows, which is how a grouped option list
+     * keeps the provider headings its `<optgroup>` used to draw.
+     *
+     * @param props - options, current value, change handler, styling, labels, and an optional leading icon.
+     * @returns the dropdown element.
+     */
+    function Select(props) {
+      const [open, setOpen] = useState(false)
+      const options = props.options ?? []
+      const selected = options.find(option => option.value === props.value)
+      const dropdown = h(Menu, {
+        open,
+        onClose: () => { setOpen(false) },
+        items: options.map(option => option.heading === true
+          ? { type: 'label', id: option.value, text: option.label }
+          : { id: option.value, label: option.label }),
+        selectedId: props.value,
+        onSelect: (value) => {
+          setOpen(false)
+          props.onChange(value)
+        },
+        align: props.align ?? 'start',
+        // Both hosts clip their own overflow — the Settings dialog scrolls its
+        // body and the list is taller than the row it hangs from.
+        portal: true,
+        anchor: h('button', {
+          type: 'button',
+          'aria-haspopup': 'menu',
+          'aria-expanded': open,
+          'aria-label': props.ariaLabel,
+          disabled: props.disabled === true,
+          onClick: () => { setOpen(current => !current) },
+          style: { ...selectStyle, ...props.style },
+        },
+          props.icon === undefined
+            ? null
+            : h('span', { style: { display: 'flex', opacity: 0.7, flexShrink: 0 } }, props.icon),
+          h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+            selected === undefined ? props.placeholder ?? '' : selected.label),
+          h('span', { style: { display: 'flex', flexShrink: 0 } }, h(IconChevronDownOutline14))),
+      })
+      // `Menu` wraps its anchor in an inline-flex pill, so a block-level
+      // dropdown stretches that wrapper through a column flex container
+      // instead of a width rule the wrapper would ignore.
+      return props.block === true
+        ? h('div', { style: { display: 'flex', flexDirection: 'column', minWidth: 0 } }, dropdown)
+        : dropdown
+    }
+
+    /**
      * Render the switch used by the enable and injection toggles.
      * @param props - checked state, tooltip, and change handler.
      * @returns the switch element.
@@ -308,11 +379,11 @@ window.__ModuleLoader__.load({
      * @returns the form element.
      */
     function AgentForm(props) {
-      const { t, workspaces, availableTools, models, initial, onSubmit, onCancel } = props
+      const { t, workspaces, availableTools, models, defaultScope, initial, onSubmit, onCancel } = props
       const editing = initial !== undefined
       const [name, setName] = useState(initial?.name ?? '')
       const [color, setColor] = useState(initial?.color ?? COLORS[5])
-      const [scope, setScope] = useState(initial?.scope ?? 'global')
+      const [scope, setScope] = useState(initial?.scope ?? defaultScope ?? 'global')
       const [route, setRoute] = useState(
         initial?.model === undefined || initial.model === null
           ? ''
@@ -360,22 +431,28 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const scopeOptions = [
-        h('option', { key: 'global', value: 'global' }, t('global')),
+      const scopeChoices = [
+        { value: 'global', label: t('global') },
         ...workspaces.map(workspace =>
-          h('option', { key: workspace.path, value: workspace.path },
-            `${t('workspace')} · ${workspace.title}`)),
+          ({ value: workspace.path, label: `${t('workspace')} · ${workspace.title}` })),
+        // The toolbar can be filtered to a scope the registry no longer lists,
+        // and a definition created from there still starts in it.
+        ...(defaultScope !== undefined && defaultScope !== 'global'
+          && !workspaces.some(workspace => workspace.path === defaultScope)
+          ? [{ value: defaultScope, label: `${t('workspace')} · ${defaultScope}` }]
+          : []),
       ]
 
-      const routeOptions = [
-        h('option', { key: 'inherit', value: '' }, t('modelInherit')),
-        ...(models?.providers ?? []).map(provider =>
-          h('optgroup', { key: provider.id, label: provider.name },
-            provider.models.map(model =>
-              h('option', {
-                key: `${provider.id}\u0000${model.id}`,
-                value: `${provider.id}\u0000${model.id}`,
-              }, `${provider.id}/${model.name}`)))),
+      // Providers become heading rows, which is what `<optgroup>` was doing.
+      const routeChoices = [
+        { value: '', label: t('modelInherit') },
+        ...(models?.providers ?? []).flatMap(provider => [
+          { value: `\u0000${provider.id}`, label: provider.name, heading: true },
+          ...provider.models.map(model => ({
+            value: `${provider.id}\u0000${model.id}`,
+            label: `${provider.id}/${model.name}`,
+          })),
+        ]),
       ]
 
       const toolModeButton = (mode) => h('button', {
@@ -398,11 +475,13 @@ window.__ModuleLoader__.load({
               editing ? t('editHint') : t('createHint'))),
           h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, opacity: 0.8, flexShrink: 0 } },
             t('fieldScope'),
-            h('select', {
-              style: { ...fieldStyle, width: 'auto', minWidth: 190 },
+            h(Select, {
+              options: scopeChoices,
               value: scope,
-              onChange: event => setScope(event.target.value),
-            }, scopeOptions))),
+              onChange: setScope,
+              ariaLabel: t('fieldScope'),
+              style: { width: 'auto', minWidth: 190 },
+            }))),
 
         h('div', { style: { display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' } },
           h('div', { style: { flex: '1 1 160px', minWidth: 0 } },
@@ -429,11 +508,13 @@ window.__ModuleLoader__.load({
                 }))))),
           h('div', { style: { flex: '1 1 160px', minWidth: 0 } },
             h(Field, { label: t('fieldModel'), hint: t('modelHint') },
-              h('select', {
-                style: fieldStyle,
+              h(Select, {
+                options: routeChoices,
                 value: route,
-                onChange: event => setRoute(event.target.value),
-              }, routeOptions)))),
+                onChange: setRoute,
+                ariaLabel: t('fieldModel'),
+                block: true,
+              })))),
 
         h(Field, { label: t('fieldDescription') },
           h('input', {
@@ -667,6 +748,9 @@ window.__ModuleLoader__.load({
             workspaces,
             availableTools: state?.availableTools ?? [],
             models: state?.models,
+            // A definition created while the list is filtered to one workspace
+            // starts in it: the filter is what the person is looking at.
+            defaultScope: scopeFilter,
             initial: form === null ? undefined : form,
             onCancel: () => setForm(undefined),
             onSubmit: async (agent) => {
@@ -678,16 +762,15 @@ window.__ModuleLoader__.load({
           }))
       }
 
-      const scopeOptions = [
-        h('option', { key: 'global', value: 'global' }, t('global')),
+      const scopeChoices = [
+        { value: 'global', label: t('global') },
         // Registered workspaces first, then any other scope a definition
         // already stores: a scope survives its workspace leaving the registry,
         // and a filter that could not reach it would hide the definition.
         ...[...new Set([
           ...workspaces.map(workspace => workspace.path),
           ...agents.map(agent => agent.scope).filter(scope => scope !== 'global'),
-        ])].map(path =>
-          h('option', { key: path, value: path }, `${t('workspace')} · ${titleOf(path)}`)),
+        ])].map(path => ({ value: path, label: `${t('workspace')} · ${titleOf(path)}` })),
       ]
 
       return h('div', { style: { padding: '4px 2px' } },
@@ -695,21 +778,20 @@ window.__ModuleLoader__.load({
 
         // ── scope selector · count · search ──────────────────────────────────
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 22 } },
-          h('div', {
-            style: {
-              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-              border, borderRadius: 999, opacity: 0.9,
-            },
-          },
-          h(ScreenGlyph, { size: 15 }),
-          h('select', {
-            style: {
-              border: 'none', background: 'transparent', color: 'inherit', font: 'inherit',
-              fontSize: 13, outline: 'none', cursor: 'pointer', maxWidth: 220,
-            },
+          // The trigger IS the pill: a menu measures its anchor, so a pill
+          // wrapped around the trigger opened the card to the right of the
+          // click target instead of under it.
+          h(Select, {
+            options: scopeChoices,
             value: scopeFilter,
-            onChange: event => setScopeFilter(event.target.value),
-          }, scopeOptions)),
+            onChange: setScopeFilter,
+            ariaLabel: t('fieldScope'),
+            icon: h(ScreenGlyph, { size: 15 }),
+            style: {
+              width: 'auto', maxWidth: 260, padding: '6px 12px', borderRadius: 999,
+              background: 'transparent', fontSize: 13, opacity: 0.9,
+            },
+          }),
           h('div', { style: { fontSize: 13, opacity: 0.75 } }, `${t('count')} ${state === undefined ? 0 : inScope.length}`),
           h('div', { style: { flex: '1 1 180px', minWidth: 0, display: 'flex', justifyContent: 'flex-end' } },
             h('div', {

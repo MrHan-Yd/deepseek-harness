@@ -26,12 +26,13 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { DEFAULT_PROBE_TIMEOUT_MS, diagnose, probeServer, sanitizeText } from './probe.js'
+import { GLOBAL_SCOPE, canonical, inScope, normalizeScope } from './scope.js'
 
 export const name = 'mcp-scope'
 
@@ -59,9 +60,6 @@ const COMMAND_NAME_PATTERN = /^[a-z][a-z0-9_-]*$/u
 /** Cap on one request body, in bytes. */
 const MAX_BODY_BYTES = 256 * 1024
 
-/** The one scope value meaning "every workspace". */
-const GLOBAL_SCOPE = 'global'
-
 /** Server name contract shared with the official MCP client. */
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 
@@ -77,47 +75,6 @@ function storePathOf(config) {
     ? process.env.DSH_HOME.trim()
     : join(homedir(), '.dsh')
   return join(home, 'mcp-scope.json')
-}
-
-/**
- * Canonicalize a directory path so scope comparison survives symlinks.
- * @param path - candidate path.
- * @returns the realpath when it exists, otherwise the resolved path.
- */
-function canonical(path) {
-  const resolved = resolve(path)
-  try {
-    return realpathSync(resolved)
-  } catch {
-    // A workspace directory can be deleted while its record survives; the
-    // resolved spelling is then the best identity available.
-    return resolved
-  }
-}
-
-/**
- * Whether a session cwd falls inside a workspace scope.
- * @param cwd - canonical session cwd, or '' when the header carries none.
- * @param scope - absolute workspace path.
- * @returns true when the session runs in that workspace or below it.
- */
-function inScope(cwd, scope) {
-  if (cwd === '') return false
-  const target = canonical(scope)
-  return cwd === target || cwd.startsWith(target.endsWith(sep) ? target : target + sep)
-}
-
-/**
- * Normalize one scope value.
- * @param value - 'global' or an absolute directory path.
- * @returns the normalized scope.
- */
-function normalizeScope(value) {
-  if (value === undefined || value === null || value === '' || value === GLOBAL_SCOPE) return GLOBAL_SCOPE
-  const text = String(value).trim()
-  if (text === GLOBAL_SCOPE) return GLOBAL_SCOPE
-  if (!text.startsWith('/')) throw new Error('a workspace scope must be an absolute path')
-  return resolve(text)
 }
 
 /**
@@ -189,7 +146,8 @@ function validateServer(input) {
  */
 function toClientConfig(server) {
   // `failOnStartupError: false` keeps one unreachable server from refusing the
-  // whole mount; the official client retries and the page renders the reason.
+  // whole mount; the official client retries in the background, so a failure
+  // here is silent by design and the mount is verified separately.
   const base = {
     serverName: server.serverName,
     transport: server.transport,
@@ -235,6 +193,23 @@ function redactSecrets(server) {
     ...(env === undefined ? {} : { envKeys: Object.keys(env) }),
     ...(headers === undefined ? {} : { headerKeys: Object.keys(headers) }),
   }
+}
+
+/**
+ * Write a failed probe's own stderr to the Host log.
+ *
+ * A server explains on stderr why it refused to start, and that text can name
+ * its credentials, so it stays out of the page, the `/mcp` output, and the
+ * `mcp_probe` result. The Host log is the one place it can be read.
+ *
+ * @param ctx - the context whose logger receives it.
+ * @param serverName - the probed server.
+ * @param stderrTail - the child's bounded stderr, when the probe captured any.
+ */
+function logProbeStderr(ctx, serverName, stderrTail) {
+  const tail = typeof stderrTail === 'string' ? stderrTail.trim() : ''
+  if (tail === '') return
+  ctx.logger?.warn?.(`mcp-scope: "${serverName}" stderr: ${tail}`)
 }
 
 /**
@@ -321,6 +296,10 @@ class ScopeRuntime {
     this.agents = new Map()
     /** @type {Map<string, string>} */
     this.mountErrors = new Map()
+    /** @type {Map<string, { reachable: boolean, detail: string }>} */
+    this.verifyResults = new Map()
+    /** @type {Set<string>} */
+    this.verifying = new Set()
     /** @type {Map<string, { signature: string, fiber: unknown }>} */
     this.commands = new Map()
   }
@@ -396,6 +375,75 @@ class ScopeRuntime {
   }
 
   /**
+   * Take one handshake reading per server that registered no tools.
+   *
+   * Nothing calls this on its own: the official client connects after
+   * `ctx.plugin` returns and reports a failure only to the Host log, so a mount
+   * that answers nothing is indistinguishable from a working one until
+   * something handshakes — and the page, which is what shows that difference,
+   * asks for this when it opens. A server that already has a reading is left
+   * alone; the person's own 探测 is what asks again.
+   *
+   * @param serverNames - the servers to read, or null for every stored server.
+   * @returns the names a reading was taken for.
+   */
+  async verify(serverNames) {
+    const wanted = serverNames === null
+      ? this.store.servers.map(server => server.serverName)
+      : serverNames
+    const taken = await Promise.all(wanted.map(serverName => this.#verify(serverName)))
+    return taken.filter(name => name !== null)
+  }
+
+  /**
+   * Read one server, when it is mounted, still tool-less, and never read.
+   * @param serverName - the server to read.
+   * @returns the name once its reading is stored, or null when it was skipped.
+   */
+  async #verify(serverName) {
+    const server = this.serverByName(serverName)
+    if (server === undefined || !this.mounts.has(serverName)) return null
+    if (this.toolNames(serverName).length > 0) return null
+    if (this.verifyResults.has(serverName) || this.verifying.has(serverName)) return null
+    this.verifying.add(serverName)
+    let reading
+    let stderrTail = ''
+    try {
+      const outcome = await probeServer(server, DEFAULT_PROBE_TIMEOUT_MS)
+      const reachable = outcome.status === 'completed'
+      stderrTail = typeof outcome.stderrTail === 'string' ? outcome.stderrTail : ''
+      reading = { reachable, detail: sanitizeText(outcome.detail) }
+    } catch (error) {
+      reading = { reachable: false, detail: sanitizeText(error instanceof Error ? error.message : String(error)) }
+    } finally {
+      this.verifying.delete(serverName)
+    }
+    if (reading.reachable === false) logProbeStderr(this.ctx, serverName, stderrTail)
+    // The probe runs for seconds: the server may have connected, or been
+    // unmounted, while it ran. Only a live, still tool-less server keeps it.
+    if (!this.mounts.has(serverName) || this.toolNames(serverName).length > 0) return null
+    this.verifyResults.set(serverName, reading)
+    this.ctx.logger?.warn?.(
+      `mcp-scope: "${serverName}" mounted without tools — probe on request: ${reading.detail}`,
+    )
+    return serverName
+  }
+
+  /**
+   * The reading taken for one server, while it still carries meaning.
+   *
+   * Registered tools retire an earlier failed reading: they are newer evidence
+   * that a handshake completed, and the failure they supersede is over.
+   *
+   * @param serverName - the server to read.
+   * @returns the reading, or null when there is none to report.
+   */
+  healthOf(serverName) {
+    if (this.toolNames(serverName).length > 0) return null
+    return this.verifyResults.get(serverName) ?? null
+  }
+
+  /**
    * Dispose one mounted server.
    *
    * Awaited by the caller: disposal releases the `serverName` reservation the
@@ -409,6 +457,7 @@ class ScopeRuntime {
     const mount = this.mounts.get(serverName)
     if (mount === undefined) return
     this.mounts.delete(serverName)
+    this.verifyResults.delete(serverName)
     try {
       await mount.fiber?.dispose?.()
     } catch (error) {
@@ -768,6 +817,7 @@ class ScopeRuntime {
       }
     }
     for (const agentId of [...this.commands.keys()]) this.#dropCommands(agentId)
+    this.verifyResults.clear()
     for (const serverName of [...this.mounts.keys()]) void this.#unmount(serverName)
     this.agents.clear()
   }
@@ -1063,6 +1113,9 @@ export async function apply(ctx, config) {
                 ...redactSecrets(server),
                 mounted: runtime.mounts.has(server.serverName),
                 mountError: runtime.mountErrors.get(server.serverName) ?? null,
+                // A handshake this plugin took itself, for a mount whose tools
+                // never arrived: the only reachability evidence the page has.
+                health: runtime.healthOf(server.serverName),
                 sessions: counts.get(server.serverName) ?? 0,
                 tools: runtime.toolNames(server.serverName),
                 // The command name is the server name, and the registry accepts
@@ -1078,12 +1131,19 @@ export async function apply(ctx, config) {
             })
             return
           }
+          if (req.method === 'POST' && route === '/api/servers/verify') {
+            const body = await readJson(req)
+            const serverNames = Array.isArray(body?.serverNames) ? body.serverNames.map(String) : null
+            sendJson(res, 200, { ok: true, verified: await runtime.verify(serverNames) })
+            return
+          }
           if (req.method === 'POST' && route === '/api/servers/probe') {
             const body = await readJson(req)
             const server = runtime.serverByName(String(body?.serverName ?? ''))
             if (server === undefined) throw new Error(`unknown MCP server "${body?.serverName ?? ''}"`)
             const outcome = await probeServer(server, DEFAULT_PROBE_TIMEOUT_MS)
             const reachable = outcome.status === 'completed'
+            if (!reachable) logProbeStderr(ctx, server.serverName, outcome.stderrTail)
             sendJson(res, 200, {
               ok: true,
               serverName: server.serverName,

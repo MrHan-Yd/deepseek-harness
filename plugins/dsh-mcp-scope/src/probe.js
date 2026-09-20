@@ -9,13 +9,18 @@
  *
  * The stdio probe spawns with `scrubbedParentEnv()` from the official
  * subprocess package, the same environment the official client gives a child,
- * so a probe cannot leak credentials the real connection would not.
+ * so a probe cannot leak credentials the real connection would not. A command
+ * Windows cannot start directly — a `.cmd`/`.bat` shim, or a bare name that
+ * only cmd.exe resolves through PATH — is started through the command
+ * interpreter by `./spawn-target.js`, so a probe accepts exactly the commands
+ * the real connection accepts.
  *
  * @module dsh-mcp-scope/probe
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+import { stdioSpawnTarget } from './spawn-target.js'
 
 /** MCP protocol revision this probe announces. */
 const INITIALIZE_PROTOCOL_VERSION = '2025-06-18'
@@ -32,7 +37,10 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 10000
 /** Cap on buffered stdout while waiting for the initialize response, in characters. */
 const MAX_STDOUT_BYTES = 256 * 1024
 
-/** Grace period between SIGTERM and SIGKILL for a probe child, in milliseconds. */
+/** Cap on the child's buffered stderr, in characters. */
+const MAX_STDERR_BYTES = 4 * 1024
+
+/** Grace period between SIGTERM and SIGKILL for a probe child, and the ceiling on a tree kill. */
 const KILL_GRACE_MS = 2000
 
 /**
@@ -97,6 +105,35 @@ function serverIdentity(result) {
 }
 
 /**
+ * Terminate a child that a Windows command interpreter holds.
+ *
+ * The process this probe owns is cmd.exe, so killing it alone leaves the MCP
+ * server it started running with the connection the probe opened; `taskkill
+ * /t` ends that tree. The call is synchronous on purpose: the probe's caller
+ * may exit the moment this probe resolves, and an outstanding kill would then
+ * be abandoned with the server still running.
+ *
+ * @param child - the spawned probe child.
+ */
+function killInterpretedChild(child) {
+  try {
+    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: KILL_GRACE_MS,
+    })
+    if (result.error === undefined) return
+  } catch {
+    // Fall through to the direct kill: taskkill is unavailable or refused.
+  }
+  try {
+    child.kill()
+  } catch {
+    // The child already exited; the exit path settled the outcome.
+  }
+}
+
+/**
  * Spawn a stdio server and complete one MCP initialize handshake.
  * @param server - the stored server record.
  * @param timeoutMs - probe deadline.
@@ -108,7 +145,9 @@ function probeStdio(server, timeoutMs, signal) {
   return new Promise((resolve) => {
     let settled = false
     let child
+    let interpreted = false
     let buffer = ''
+    let stderr = ''
     let timer
     let killTimer
     const onAbort = () => { finish('failed', `timeout after ${timeoutMs}ms or cancelled`) }
@@ -120,31 +159,38 @@ function probeStdio(server, timeoutMs, signal) {
       signal?.removeEventListener('abort', onAbort)
       try {
         if (child !== undefined && child.exitCode === null && child.signalCode === null) {
-          child.kill()
-          // SIGTERM is a request: a server that ignores it (or an `npx` wrapper
-          // holding the real process) would otherwise outlive the probe. Escalate
-          // once, and do not keep the process alive for the escalation.
-          killTimer = setTimeout(() => {
-            try {
-              child?.kill('SIGKILL')
-            } catch {
-              // Already gone between the check and the signal.
-            }
-          }, KILL_GRACE_MS)
-          killTimer.unref?.()
+          if (interpreted) {
+            killInterpretedChild(child)
+          } else {
+            child.kill()
+            // SIGTERM is a request: a server that ignores it (or an `npx` wrapper
+            // holding the real process) would otherwise outlive the probe. Escalate
+            // once, and do not keep the process alive for the escalation.
+            killTimer = setTimeout(() => {
+              try {
+                child?.kill('SIGKILL')
+              } catch {
+                // Already gone between the check and the signal.
+              }
+            }, KILL_GRACE_MS)
+            killTimer.unref?.()
+          }
         }
       } catch {
         // The child already exited; the exit path settled the outcome.
       }
-      resolve({ status, detail, elapsedMs: Date.now() - started })
+      resolve({ status, detail, elapsedMs: Date.now() - started, stderrTail: sanitizeText(stderr) })
     }
     timer = setTimeout(() => { finish('failed', `timeout after ${timeoutMs}ms`) }, timeoutMs)
     try {
-      child = spawn(server.command, [...(server.args ?? [])], {
+      const target = stdioSpawnTarget(server.command, server.args)
+      interpreted = target.interpreted
+      child = spawn(target.file, target.args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...scrubbedParentEnv(), ...(server.env ?? {}) },
         ...(typeof server.cwd === 'string' && server.cwd !== '' ? { cwd: server.cwd } : {}),
         windowsHide: true,
+        ...target.options,
       })
     } catch (error) {
       finish('failed', errorText(error))
@@ -179,9 +225,13 @@ function probeStdio(server, timeoutMs, signal) {
         }
       }
     })
-    // stderr is consumed so a chatty child cannot block on a full pipe, and is
-    // never rendered: a server may print credentials.
-    child.stderr?.on('data', () => {})
+    // stderr is consumed so a chatty child cannot block on a full pipe. Its tail
+    // never reaches the page — a server may print credentials — but it is the
+    // only place a server says why it refused to start, so the caller logs it.
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString('utf8')
+      if (stderr.length > MAX_STDERR_BYTES) stderr = stderr.slice(-MAX_STDERR_BYTES)
+    })
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
       child.stdin?.write(initializeRequest())

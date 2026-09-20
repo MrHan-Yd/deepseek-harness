@@ -57,7 +57,17 @@ The section is registered in the agent's own scope, so it unwinds with the sessi
 
 ## The Settings page
 
-The page lists the stored definitions. The toolbar's scope selector narrows the list to one scope and its count follows that filter, while the section count also answers the search box, so the two differ only while searching. A row shows the definition's colour marker in its tile, its `/name` command, its scope, model, and tool policy as chips, the model-facing description, a switch for the enable flag, and a delete button; clicking the row body opens the editor. The delete button arms on the first click and deletes on the second.
+The page lists the stored definitions. The toolbar's scope selector narrows the list to one scope and its count follows that filter, while the section count also answers the search box, so the two differ only while searching. A definition created while the list is filtered to one workspace starts in that workspace: the filter is what the person is looking at. A row shows the definition's colour marker in its tile, its `/name` command, its scope, model, and tool policy as chips, the model-facing description, a switch for the enable flag, and a delete button; clicking the row body opens the editor. The delete button arms on the first click and deletes on the second.
+
+Every dropdown — the toolbar's scope selector and the editor's scope and model fields — is the shared `Menu` primitive from `@deepseek-ai/dsh-client-ui-primitives`, the same control the 通用设置 rows open. A native `<select>` popup is drawn by the operating system and cannot follow the application theme, so in the dark theme its highlighted row rendered white-on-light and the options were unreadable. The model list keeps its provider headings as the primitive's non-selectable label rows.
+
+## Tests
+
+`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/select.client.test.mjs` boots the browser half in jsdom and drives the editor's dropdowns: no native select may return, the scope rows follow the workspace registry, and the model list keeps its provider headings and saves the route it selected.
+
+```sh
+node --test "plugins/dsh-agent-scope/tests/*.test.mjs"
+```
 
 ## Slash commands
 

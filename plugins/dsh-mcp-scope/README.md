@@ -18,11 +18,31 @@ Every enabled server is mounted **once** on the root context through the officia
 3. Servers whose scope is a workspace the session is not in contribute their tool names — discovered from the live tool registry under the `mcp__<serverName>__` prefix — to a deny list.
 4. The deny list is applied with `agent.ctx.tools.restrict({ deny })`, which requires exactly that agent-scoped context. The disposer is held per agent and lifted on `agent/disposed` or replaced on the next sweep.
 
-Tools are therefore hidden from the model, not merely discouraged. Servers stay connected; only visibility is scoped.
+Tools are therefore hidden from the model, not merely discouraged. Servers stay mounted; only visibility is scoped.
 
 ## The Settings page
 
-The toolbar's scope selector narrows the list to one scope and its count follows that filter, while the section count also answers the search box — which matches a server's name and, for a stdio server, its command line — so the two differ only while searching. Each row shows the server's transport, its `/name` command, scope, connection state, and tool count as chips, its command or URL, a **探测** button that completes a real MCP handshake, a **试用** button that opens the tool console, a switch for the enable flag, and a delete button that arms on the first click and deletes on the second. Clicking the row body opens the editor.
+The toolbar's scope selector narrows the list to one scope and its count follows that filter, while the section count also answers the search box — which matches a server's name and, for a stdio server, its command line — so the two differ only while searching. A server created while the list is filtered to one workspace starts in that workspace: the filter is what the person is looking at. Each row shows the server's transport, its `/name` command, scope, connection state, and tool count as chips, its command or URL, a **探测** button that completes a real MCP handshake, a **试用** button that opens the tool console, a switch for the enable flag, and a delete button that arms on the first click and deletes on the second. Clicking the row body opens the editor.
+
+Every dropdown here — the scope filter, the editor's scope and transport fields, and the tool picker — is the shared `Menu` primitive from `@deepseek-ai/dsh-client-ui-primitives`, the same control the 通用设置 rows open. A native `<select>` popup is drawn by the operating system and cannot follow the application theme, so in the dark theme its highlighted row rendered white-on-light and the options were unreadable.
+
+Both dialogs offer two ways in: **表单** for name, transport, timeout, and command/arguments/environment (or URL/headers), and **JSON** for a pasted configuration, so a config copied from another tool can be added or rewritten verbatim:
+
+```json
+{
+  "redis_9_dev_7": {
+    "type": "stdio",
+    "command": "C:\\Program Files\\nodejs\\redis.cmd",
+    "args": ["redis://localhost:6379/7"]
+  }
+}
+```
+
+That name → server map is the shape the MCP clients in use here write. The same map under an `mcpServers` wrapper, and one server object on its own with `name`, are read too; `transport` is accepted wherever `type` is. `type` is `stdio` for `command`/`args`/`env`/`cwd`, or `http`/`streamable-http` for `url`/`headers`. Numbers and booleans inside `env`/`headers` become the strings the Host requires. A paste is parsed as it is typed, the record it will save is reported back, and saving waits until it can be read; more than one server in one paste is refused. A `scope` written in the paste seeds the scope selector, which remains the visible control that is saved.
+
+An edit opens the paste on the stored record, credential keys included as blank values: the Host never sends a credential's value to the page, and a blank value keeps the stored one, so the template survives a round trip. A `cwd` the paste omits likewise keeps its stored value, and a paste that renames the server is refused — the record keeps the name it was created with.
+
+The form has no working-directory field: the scope above already decides where a server is visible, and a cwd is not something most servers need. An existing cwd survives an edit, and a paste is how a server that does need one gets it.
 
 ## Waking a server with `/`
 
@@ -93,6 +113,14 @@ Beyond the Settings page, the plugin provides the operating surface for the serv
 
 **Probing is observation, not inference.** The official client ships no connection-status seam — `packages/mcp/mcp-client/src/status.ts` does not exist — so nothing here reports a server as connected because its config looks right. A stdio probe spawns the configured command with `scrubbedParentEnv()` from the official subprocess package, the same environment the real connection gives a child; an http probe sends the same `initialize` request.
 
+**A failed stdio probe writes the child's stderr to the Host log.** That text is where a server says why it refused to start — `process exited before initialize response (code 1)` is the handshake's verdict, not a cause — and because it can name credentials it reaches neither the page, the `/mcp` output, nor the `mcp_probe` result.
+
+**A row claims a connection only on evidence.** Mounting and connecting are different events: `ctx.plugin` returns before the client's handshake finishes, and a failed connection reaches the Host log alone, so a mount that answers nothing looks exactly like a working one. The page therefore reports `已连接` for three observed states only — the server's tools are registered, the check the page itself asked for completed a handshake, or the person's own 探测 completed — and reports `连接中` for a mount with none of them.
+
+**The MCP page takes that handshake once, when it is opened.** A silent mount is read only while that section is open, and only for the mounts that registered no tools and have no reading yet; the reading is stored and shown as `不可达 (页面检查)` with the observed reason, and dropped as soon as that server's tools arrive, because the tools are newer evidence that the handshake it called failed has since completed. The section is the trigger: the Settings shell renders only the active section, so the check runs when someone navigates to this page, never when the Settings dialog opens elsewhere. Nothing runs on a timer and nothing retries: a server that connects normally is never started a second time, a row already read is left as it is, and asking again for one server is what the person's own 探测 does.
+
+**A Windows command that needs a shell gets one.** Node refuses to start a `.cmd`/`.bat` shim directly — `spawn` fails with `EINVAL` — and only `.exe`/`.com` are directly startable, so a probe builds the same cmd.exe command line cross-spawn builds for the official client (`src/spawn-target.js`). That is what makes a server configured as a full `…\npm\mongodb-mcp-server.cmd` path or as a bare `npx` probe as reachable as it is connected, and it keeps the probe's teardown honest: the process it owns is cmd.exe, so it ends the tree with `taskkill /t` rather than leaving the server behind.
+
 ## Security
 
 Two confused-deputy paths a browser opens against a local HTTP API apply here, and one of them bites especially hard because this API can create a stdio server — which executes a command.
@@ -113,11 +141,12 @@ The page talks to the host half over `/mcp-scope/api`. Every request passes the 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/mcp-scope/api/state` | Servers, mount state, tool names, live-session visibility, workspace list. Credential values are withheld |
+| GET | `/mcp-scope/api/state` | Servers, mount state, tool names, the page's handshake reading, live-session visibility, workspace list. Credential values are withheld |
 | POST | `/mcp-scope/api/servers/create` | Create one server |
 | POST | `/mcp-scope/api/servers/update` | Replace one server (`serverName` is immutable) |
 | POST | `/mcp-scope/api/servers/toggle` | Enable or disable one server |
 | POST | `/mcp-scope/api/servers/delete` | Remove one server |
+| POST | `/mcp-scope/api/servers/verify` | Take one handshake reading per named silent mount, or per every silent mount when the body names none |
 | POST | `/mcp-scope/api/servers/probe` | Probe one server and diagnose a failure |
 | POST | `/mcp-scope/api/servers/call` | Run one `mcp__*` tool through the official pipeline |
 
@@ -128,6 +157,7 @@ A credential key submitted with an empty value keeps its stored value: the page 
 - **Tool visibility, not connection isolation.** A server outside a session's scope still runs for the process. Only its tools are masked.
 - **`scope` is a path, not a workspace id.** DSH keys workspace membership on the session header's canonical cwd, and so does this plugin; a workspace renamed on disk keeps its old path here until edited.
 - **Disabled servers are unmounted, not masked.** Disabling disposes the client, so its tools disappear for every session.
+- **The page's check starts a silent server one extra time.** While the official client is still retrying its own connection to a server that has produced no tools, opening the page starts that command once more. It happens once per page open per unread mount, never on a timer.
 - **No protocol-version field.** The official client negotiates the MCP protocol version itself and exposes no config for it.
 - **Resources are reached through the official tools.** `@deepseek-ai/dsh-mcp-resources` owns `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`; this plugin does not re-bridge them, and MCP prompt templates remain unbridged upstream.
 - **`/mcp` needs an existing session.** DSH resolves a command against a live agent, so it is not offered on an empty composer.
@@ -143,7 +173,15 @@ A profile may still install the bundle explicitly. The row id is the same, and t
 dsh plugin --profile <profile> add /absolute/path/to/deepseek-harness/plugins/dsh-mcp-scope
 ```
 
-This plugin takes no build step: `src/index.js`, `src/probe.js`, and `src/client.js` are the shipped sources.
+This plugin takes no build step: `src/index.js`, `src/probe.js`, `src/spawn-target.js`, `src/scope.js`, and `src/client.js` are the shipped sources.
+
+## Tests
+
+`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/spawn-target.test.mjs` pins the rule that decides when a command goes through the command interpreter and the escaping it needs there, against the command line cross-spawn builds for the official client. `tests/dropdown.client.test.mjs` and `tests/status.client.test.mjs` boot the browser half in jsdom through the shared `tests/harness.mjs`: the first drives the editor — the dropdowns (which is what keeps a native `<select>` from returning), the configurations a paste accepts and the record each one saves in both dialogs, and the stored credentials and working directory an edit must keep; the second drives what a row claims about its connection, which is never `已连接` without a handshake to point at, and when that handshake is asked for: once for the silent mounts when the page opens, and never on its own.
+
+```sh
+node --test "plugins/dsh-mcp-scope/tests/*.test.mjs"
+```
 
 ## Why this lives in `plugins/` and not `packages/`
 

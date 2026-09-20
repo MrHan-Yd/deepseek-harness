@@ -2,9 +2,10 @@
  * dsh-mcp-scope browser half: the Settings page for workspace-scoped MCP servers.
  *
  * Shipped as a Dynamic Client bundle without a build step: the factory takes
- * `react` from the platform module table and builds every element with
- * `createElement`, so the file in `src/` is the file a reviewer reads. Icons are
- * inline SVG for the same reason: the bundle resolves nothing but `react`.
+ * `react` and the shared `@deepseek-ai/dsh-client-ui-primitives` from the
+ * platform module table and builds every element with `createElement`, so the
+ * file in `src/` is the file a reviewer reads. Other icons are inline SVG for
+ * the same reason: the bundle resolves nothing else.
  *
  * The page talks to the host half over the same-origin `/mcp-scope/api` routes
  * and always sends the `x-dsh-mcp-scope` header the host requires.
@@ -17,6 +18,11 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
     const React = require('react')
+    // The dropdown trigger's chevron and list come from the shared primitives:
+    // `Menu` is the control every other Settings row opens, and the module table
+    // seeds the package for dynamic bundles, so no build step or manifest entry
+    // is needed to reach it.
+    const { IconChevronDownOutline14, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useState } = React
@@ -40,7 +46,9 @@ window.__ModuleLoader__.load({
       enabled: '已启用',
       disabled: '已停用',
       mountFailed: '装载失败',
-      mounted: '已连接',
+      connected: '已连接',
+      connecting: '连接中…',
+      pageCheck: '页面检查',
       edit: '编辑',
       remove: '删除',
       confirmRemove: '确认删除',
@@ -52,10 +60,30 @@ window.__ModuleLoader__.load({
       fieldNameHint: '1–32 位字母、数字、下划线或连字符',
       fieldScope: '作用域',
       fieldTransport: '类型',
+      modeForm: '表单',
+      modeJson: 'JSON',
+      jsonHint: '粘贴一份配置：{"名称": {"type": "stdio", "command": "…", "args": ["…"]}}（也兼容外层再包一层 "mcpServers" 的写法）。',
+      jsonEditHint: '按已存的配置生成；env/headers 只列键名，值留空表示保持原值，名称不可更改。',
+      jsonNameFixed: '名称不可更改：粘贴里的名称必须仍是 {name}。',
+      jsonPreview: '解析成功',
+      jsonEmpty: '先粘贴一份服务器配置。',
+      jsonInvalid: 'JSON 解析失败',
+      jsonObject: '配置必须是一个对象。',
+      jsonServers: '配置必须是一个「名称 → 服务器」的对象。',
+      jsonServersEmpty: '配置里没有服务器。',
+      jsonServersMultiple: '配置里有多个服务器；一次只能添加一个。',
+      jsonServerObject: '每个服务器配置必须是一个对象。',
+      jsonNameMissing: '缺少服务器名称：用外层对象的键，或在配置里写 "name"。',
+      jsonTransport: '不支持的类型 "{type}"：这里只支持 stdio 和 streamable-http。',
+      jsonCommandMissing: 'stdio 服务器缺少 "command"。',
+      jsonUrlMissing: '远程服务器缺少以 http:// 或 https:// 开头的 "url"。',
+      jsonArgs: '"args" 必须是数组。',
+      jsonMapObject: '"{field}" 必须是一个对象。',
+      jsonMapKey: '"{field}" 的键不能为空。',
+      jsonMapValue: '"{field}.{key}" 必须是字符串（数字和布尔值会转成字符串）。',
       fieldTimeout: '超时时间 MS',
       fieldCommand: '命令',
       fieldArgs: '参数（空格分隔）',
-      fieldCwd: '工作目录（可选）',
       secretHint: '值留空表示保持原值 —— 凭据不会回传到这个页面',
       fieldEnv: '环境变量（可选，每行 KEY=VALUE）',
       fieldUrl: 'URL',
@@ -107,7 +135,9 @@ window.__ModuleLoader__.load({
       enabled: 'Enabled',
       disabled: 'Disabled',
       mountFailed: 'Mount failed',
-      mounted: 'Connected',
+      connected: 'Connected',
+      connecting: 'Connecting…',
+      pageCheck: 'page check',
       edit: 'Edit',
       remove: 'Delete',
       confirmRemove: 'Confirm delete',
@@ -119,10 +149,30 @@ window.__ModuleLoader__.load({
       fieldNameHint: '1–32 letters, digits, underscores, or hyphens',
       fieldScope: 'Scope',
       fieldTransport: 'Transport',
+      modeForm: 'Form',
+      modeJson: 'JSON',
+      jsonHint: 'Paste a configuration: {"name": {"type": "stdio", "command": "…", "args": ["…"]}}. A configuration wrapped in "mcpServers" is accepted too.',
+      jsonEditHint: 'Built from the stored configuration; env/headers list key names only, a blank value keeps the stored one, and the name cannot change.',
+      jsonNameFixed: 'The name cannot change: the pasted configuration must still be named {name}.',
+      jsonPreview: 'Parsed',
+      jsonEmpty: 'Paste a server configuration first.',
+      jsonInvalid: 'JSON could not be parsed',
+      jsonObject: 'The configuration must be an object.',
+      jsonServers: 'The configuration must be a name → server object.',
+      jsonServersEmpty: 'The configuration holds no server.',
+      jsonServersMultiple: 'The configuration holds more than one server; add one at a time.',
+      jsonServerObject: 'Each server configuration must be an object.',
+      jsonNameMissing: 'No server name: use the outer key, or write "name" in the configuration.',
+      jsonTransport: 'Transport "{type}" is not supported here; use stdio or streamable-http.',
+      jsonCommandMissing: 'A stdio server needs "command".',
+      jsonUrlMissing: 'A remote server needs a "url" starting with http:// or https://.',
+      jsonArgs: '"args" must be an array.',
+      jsonMapObject: '"{field}" must be an object.',
+      jsonMapKey: '"{field}" keys must not be empty.',
+      jsonMapValue: '"{field}.{key}" must be a string (numbers and booleans are converted).',
       fieldTimeout: 'Timeout ms',
       fieldCommand: 'Command',
       fieldArgs: 'Arguments (space separated)',
-      fieldCwd: 'Working directory (optional)',
       secretHint: 'A blank value keeps the stored one — credentials are never sent to this page',
       fieldEnv: 'Environment (optional, one KEY=VALUE per line)',
       fieldUrl: 'URL',
@@ -178,6 +228,10 @@ window.__ModuleLoader__.load({
     const chipStyle = {
       fontSize: 11, padding: '2px 8px', borderRadius: 6, border: softBorder,
       opacity: 0.75, whiteSpace: 'nowrap',
+    }
+    const selectStyle = {
+      ...fieldStyle, display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 8, textAlign: 'left', cursor: 'pointer',
     }
 
     /**
@@ -245,6 +299,61 @@ window.__ModuleLoader__.load({
         props.hint === undefined
           ? null
           : h('div', { style: { fontSize: 11, opacity: 0.5, marginTop: 4 } }, props.hint))
+    }
+
+    /**
+     * One dropdown: the shared `Menu` primitive opened from a pill trigger.
+     *
+     * This replaces the native `<select>` the page used to render. A native
+     * popup is drawn by the operating system from its own palette and cannot
+     * follow the application theme, so a dark-theme row came out as white text
+     * on the highlighted light row and the options could not be read. `Menu`
+     * is the control the rest of the Settings surface uses — every dropdown
+     * row in 通用设置 opens this one — so the page matches them, in both
+     * themes, and keyboard traversal and outside-click dismissal come with it.
+     *
+     * @param props - options, current value, change handler, styling, labels, and an optional leading icon.
+     * @returns the dropdown element.
+     */
+    function Select(props) {
+      const [open, setOpen] = useState(false)
+      const options = props.options ?? []
+      const selected = options.find(option => option.value === props.value)
+      const dropdown = h(Menu, {
+        open,
+        onClose: () => { setOpen(false) },
+        items: options.map(option => ({ id: option.value, label: option.label })),
+        selectedId: props.value,
+        onSelect: (value) => {
+          setOpen(false)
+          props.onChange(value)
+        },
+        align: props.align ?? 'start',
+        // Both hosts clip their own overflow — the Settings dialog scrolls its
+        // body and the list is taller than the row it hangs from.
+        portal: true,
+        anchor: h('button', {
+          type: 'button',
+          'aria-haspopup': 'menu',
+          'aria-expanded': open,
+          'aria-label': props.ariaLabel,
+          disabled: props.disabled === true,
+          onClick: () => { setOpen(current => !current) },
+          style: { ...selectStyle, ...props.style },
+        },
+          props.icon === undefined
+            ? null
+            : h('span', { style: { display: 'flex', opacity: 0.7, flexShrink: 0 } }, props.icon),
+          h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+            selected === undefined ? props.placeholder ?? '' : selected.label),
+          h('span', { style: { display: 'flex', flexShrink: 0 } }, h(IconChevronDownOutline14))),
+      })
+      // `Menu` wraps its anchor in an inline-flex pill, so a block-level
+      // dropdown stretches that wrapper through a column flex container
+      // instead of a width rule the wrapper would ignore.
+      return props.block === true
+        ? h('div', { style: { display: 'flex', flexDirection: 'column', minWidth: 0 } }, dropdown)
+        : dropdown
     }
 
     /**
@@ -336,31 +445,252 @@ window.__ModuleLoader__.load({
       return (keys ?? []).map(key => `${key}${separator}`).join('\n')
     }
 
+    /** Transport names a pasted configuration may use, normalized to this plugin's two. */
+    const JSON_TRANSPORTS = {
+      stdio: 'stdio',
+      http: 'streamable-http',
+      remote: 'streamable-http',
+      'streamable-http': 'streamable-http',
+      streamable_http: 'streamable-http',
+      streamablehttp: 'streamable-http',
+    }
+
+    /** A sample a person can paste, shaped like the configs other MCP clients document. */
+    const JSON_PLACEHOLDER = `{
+  "memory": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-memory"],
+    "env": { "MEMORY_FILE_PATH": "/tmp/memory.json" }
+  }
+}`
+
+    /** Top-level fields that belong to a server, not to a name → server map. */
+    const JSON_SERVER_FIELDS = [
+      'command', 'args', 'env', 'cwd', 'url', 'headers', 'name', 'serverName', 'type', 'transport',
+    ]
+
+    /**
+     * Read one object field as a string map.
+     *
+     * Numbers and booleans are converted, because documented MCP configurations
+     * routinely spell a port or a flag that way; anything else is a mistake the
+     * paste should hear about rather than have silently dropped.
+     *
+     * @param value - the candidate field.
+     * @param field - field name, for the message.
+     * @param t - the bound dictionary.
+     * @returns the map, or the message to show.
+     */
+    function jsonStringMap(value, field, t) {
+      if (value === undefined || value === null) return { map: {} }
+      if (typeof value !== 'object' || Array.isArray(value)) {
+        return { error: t('jsonMapObject').replace('{field}', field) }
+      }
+      const map = {}
+      for (const [key, entry] of Object.entries(value)) {
+        if (key.trim() === '') return { error: t('jsonMapKey').replace('{field}', field) }
+        if (typeof entry === 'string') {
+          map[key] = entry
+          continue
+        }
+        if (typeof entry === 'number' || typeof entry === 'boolean') {
+          map[key] = String(entry)
+          continue
+        }
+        return { error: t('jsonMapValue').replace('{field}', field).replace('{key}', key) }
+      }
+      return { map }
+    }
+
+    /**
+     * Parse one pasted MCP server configuration into the record the Host stores.
+     *
+     * Both shapes people actually copy are accepted: a map of server name to
+     * server configuration — `{"name": {"type": "stdio", "command": …}}`, the
+     * shape the other MCP clients in use here write — and that same map under
+     * an `mcpServers` wrapper. One server object on its own is accepted too.
+     * The Host remains the validator — this only has to name what it cannot
+     * read before the request is sent.
+     *
+     * @param text - the textarea contents.
+     * @param t - the bound dictionary.
+     * @returns the parsed server, or the message to show.
+     */
+    function parseServerJson(text, t) {
+      const trimmed = String(text ?? '').trim()
+      if (trimmed === '') return { error: t('jsonEmpty') }
+      let parsed
+      try {
+        parsed = JSON.parse(trimmed)
+      } catch (error) {
+        return { error: `${t('jsonInvalid')}：${error instanceof Error ? error.message : String(error)}` }
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { error: t('jsonObject') }
+
+      // A top-level field only a server has means the object IS the server;
+      // otherwise the object is the name → server map.
+      const isServer = JSON_SERVER_FIELDS.some(field => parsed[field] !== undefined)
+      const servers = parsed.mcpServers !== undefined
+        ? parsed.mcpServers
+        : isServer ? undefined : parsed
+
+      let name = ''
+      let spec = parsed
+      if (servers !== undefined) {
+        if (servers === null || typeof servers !== 'object' || Array.isArray(servers)) return { error: t('jsonServers') }
+        const names = Object.keys(servers)
+        if (names.length === 0) return { error: t('jsonServersEmpty') }
+        if (names.length > 1) return { error: t('jsonServersMultiple') }
+        name = names[0]
+        spec = servers[name]
+        if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) return { error: t('jsonServerObject') }
+      }
+
+      // In the map the key names the server; a bare object names it itself.
+      const serverName = String(name !== '' ? name : (spec.serverName ?? spec.name ?? '')).trim()
+      if (serverName === '') return { error: t('jsonNameMissing') }
+
+      const url = typeof spec.url === 'string' ? spec.url.trim() : ''
+      const declared = spec.transport ?? spec.type
+      const transport = declared === undefined
+        ? (url === '' ? 'stdio' : 'streamable-http')
+        : JSON_TRANSPORTS[String(declared).toLowerCase()]
+      if (transport === undefined) return { error: t('jsonTransport').replace('{type}', String(declared)) }
+
+      const timeout = Number(spec.toolCallTimeoutMs)
+      const server = {
+        serverName,
+        transport,
+        enabled: spec.enabled !== false,
+        toolCallTimeoutMs: Number.isInteger(timeout) && timeout > 0 ? timeout : 30000,
+      }
+      if (transport === 'stdio') {
+        const command = typeof spec.command === 'string' ? spec.command.trim() : ''
+        if (command === '') return { error: t('jsonCommandMissing') }
+        const args = spec.args ?? []
+        if (!Array.isArray(args)) return { error: t('jsonArgs') }
+        const env = jsonStringMap(spec.env, 'env', t)
+        if (env.error !== undefined) return { error: env.error }
+        server.command = command
+        server.args = args.map(String)
+        server.env = env.map
+        // Reported only when the paste names it: an edit keeps the stored
+        // working directory, which the form no longer shows, and an explicit
+        // empty string still clears it.
+        if (typeof spec.cwd === 'string') server.cwd = spec.cwd.trim()
+      } else {
+        if (!/^https?:\/\//u.test(url)) return { error: t('jsonUrlMissing') }
+        const headers = jsonStringMap(spec.headers, 'headers', t)
+        if (headers.error !== undefined) return { error: headers.error }
+        server.url = url
+        server.headers = headers.map
+      }
+      // A scope written in the paste seeds the selector that decides the final
+      // value; the visible control stays authoritative.
+      if (typeof spec.scope === 'string' && spec.scope.trim() !== '') server.scope = spec.scope.trim()
+      return { server }
+    }
+
     /**
      * The create/edit form.
      * @param props - form props.
      * @returns the form element.
      */
     function ServerForm(props) {
-      const { t, workspaces, initial, onSubmit, onCancel } = props
+      const { t, workspaces, defaultScope, initial, onSubmit, onCancel } = props
       const editing = initial !== undefined
       const [name, setName] = useState(initial?.serverName ?? '')
-      const [scope, setScope] = useState(initial?.scope ?? 'global')
+      const [scope, setScope] = useState(initial?.scope ?? defaultScope ?? 'global')
       const [transport, setTransport] = useState(initial?.transport ?? 'stdio')
       const [timeout, setTimeoutMs] = useState(String(initial?.toolCallTimeoutMs ?? 30000))
       const [command, setCommand] = useState(initial?.command ?? '')
       const [args, setArgs] = useState((initial?.args ?? []).join(' '))
-      const [cwd, setCwd] = useState(initial?.cwd ?? '')
+      // No editor field: the scope above decides visibility, a stored working
+      // directory survives an edit, and JSON mode is where a new one is set.
+      const cwd = initial?.cwd ?? ''
       const [env, setEnv] = useState(formatKeys(initial?.envKeys, '='))
       const [url, setUrl] = useState(initial?.url ?? '')
       const [headers, setHeaders] = useState(formatKeys(initial?.headerKeys, ':'))
       const [busy, setBusy] = useState(false)
       const [failure, setFailure] = useState('')
+      const [mode, setMode] = useState('form')
+      const [jsonText, setJsonText] = useState('')
+
+      /**
+       * The stored record as the edit tab's starting point.
+       *
+       * Credential values never reach this page, so each stored key is listed
+       * with a blank value: the Host keeps a stored value for a key submitted
+       * blank, which makes the template a safe thing to edit and save.
+       *
+       * @returns the template text, or '' when there is no stored record.
+       */
+      const jsonTemplate = () => {
+        if (!editing) return ''
+        const spec = { type: initial.transport }
+        if (initial.transport === 'stdio') {
+          spec.command = initial.command ?? ''
+          spec.args = [...(initial.args ?? [])]
+          if ((initial.cwd ?? '') !== '') spec.cwd = initial.cwd
+          if ((initial.envKeys ?? []).length > 0) {
+            spec.env = Object.fromEntries((initial.envKeys ?? []).map(key => [key, '']))
+          }
+        } else {
+          spec.url = initial.url ?? ''
+          if ((initial.headerKeys ?? []).length > 0) {
+            spec.headers = Object.fromEntries((initial.headerKeys ?? []).map(key => [key, '']))
+          }
+        }
+        if ((initial.toolCallTimeoutMs ?? 30000) !== 30000) spec.toolCallTimeoutMs = initial.toolCallTimeoutMs
+        if (initial.enabled === false) spec.enabled = false
+        return JSON.stringify({ [initial.serverName]: spec }, undefined, 2)
+      }
+
+      /**
+       * Add every stored key the paste left out, blank.
+       *
+       * `mergeSecrets` keeps a stored value for a key submitted blank and drops
+       * a key that is absent, so an edit must name every key this page cannot
+       * render a value for.
+       *
+       * @param map - the paste's map.
+       * @param storedKeys - key names the stored record holds.
+       * @returns the map with the missing keys added blank.
+       */
+      const withStoredKeys = (map, storedKeys) => {
+        const result = { ...map }
+        for (const key of storedKeys ?? []) {
+          if (result[key] === undefined) result[key] = ''
+        }
+        return result
+      }
 
       const submit = async () => {
         setBusy(true)
         setFailure('')
         try {
+          if (mode === 'json') {
+            // The selector is the visible control, so it owns the scope, and
+            // the parse only reports what it cannot read.
+            if (jsonProblem !== undefined) {
+              setFailure(jsonProblem)
+              return
+            }
+            const server = { ...json.server, scope }
+            if (editing) {
+              if (server.transport === 'stdio') {
+                server.env = withStoredKeys(server.env, initial.envKeys)
+                server.cwd = server.cwd ?? initial.cwd ?? ''
+              } else {
+                server.headers = withStoredKeys(server.headers, initial.headerKeys)
+              }
+            } else if (server.transport === 'stdio') {
+              server.cwd = server.cwd ?? ''
+            }
+            await onSubmit(server)
+            return
+          }
           const server = {
             serverName: name.trim(),
             scope,
@@ -385,29 +715,90 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const scopeOptions = [
-        h('option', { key: 'global', value: 'global' }, t('global')),
+      const json = mode === 'json' ? parseServerJson(jsonText, t) : undefined
+      // What stops this paste from saving: a parse error, or a rename an edit
+      // cannot apply — the record keeps the name it was created with.
+      const jsonProblem = json === undefined
+        ? undefined
+        : json.error ?? (editing && json.server.serverName !== initial.serverName
+          ? t('jsonNameFixed').replace('{name}', initial.serverName)
+          : undefined)
+
+      const onJsonChange = (text) => {
+        setJsonText(text)
+        const parsed = parseServerJson(text, t)
+        // A scope in the paste shows up in the selector that will save it.
+        if (parsed.server?.scope !== undefined) setScope(parsed.server.scope)
+      }
+
+      const switchMode = (value) => {
+        setMode(value)
+        // An edit starts from the stored record; a create starts empty, where
+        // the placeholder shows the shape.
+        if (value === 'json' && jsonText === '') setJsonText(jsonTemplate())
+      }
+
+      const modeButton = (value, label) => h('button', {
+        key: value,
+        type: 'button',
+        'aria-pressed': mode === value,
+        onClick: () => switchMode(value),
+        style: {
+          padding: '5px 14px', borderRadius: 999, font: 'inherit', fontSize: 12, cursor: 'pointer',
+          border: mode === value ? 'none' : '1px solid transparent',
+          background: mode === value ? 'color-mix(in srgb, currentColor 14%, transparent)' : 'transparent',
+          color: 'inherit', opacity: mode === value ? 1 : 0.65,
+        },
+      }, label)
+
+      const scopeChoices = [
+        { value: 'global', label: t('global') },
         ...workspaces.map(workspace =>
-          h('option', { key: workspace.path, value: workspace.path },
-            `${t('workspace')} · ${workspace.title}`)),
+          ({ value: workspace.path, label: `${t('workspace')} · ${workspace.title}` })),
+        // The toolbar can be filtered to a scope the registry no longer lists,
+        // and a server created from there still starts in it.
+        ...(defaultScope !== undefined && defaultScope !== 'global'
+          && !workspaces.some(workspace => workspace.path === defaultScope)
+          ? [{ value: defaultScope, label: `${t('workspace')} · ${defaultScope}` }]
+          : []),
       ]
 
-      return h('div', { style: { maxWidth: 880 } },
-        h('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22 } },
-          h('div', null,
-            h('div', { style: { fontSize: 20, fontWeight: 600, marginBottom: 6 } },
-              editing ? t('editTitle') : t('createTitle')),
-            h('div', { style: { fontSize: 13, opacity: 0.65 } },
-              editing ? t('editHint') : t('createHint'))),
-          h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, opacity: 0.8, flexShrink: 0 } },
-            t('fieldScope'),
-            h('select', {
-              style: { ...fieldStyle, width: 'auto', minWidth: 190 },
-              value: scope,
-              onChange: event => setScope(event.target.value),
-            }, scopeOptions))),
+      // Both dialogs offer the paste: an edit starts from the stored record,
+      // whose credential keys appear blank and keep their stored values.
+      const modes = h('div', {
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: 2, padding: 3, marginBottom: 18,
+          border, borderRadius: 999, background: subtle,
+        },
+      }, modeButton('form', t('modeForm')), modeButton('json', t('modeJson')))
 
-        h('div', { style: { display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' } },
+      // A live region: the parse result and whatever stops the paste from
+      // saving are the same slot, and both are worth announcing while someone
+      // pastes.
+      const jsonPreview = json === undefined
+        ? null
+        : jsonProblem !== undefined
+          ? h('div', { role: 'status', style: { color: '#e5484d', fontSize: 12, marginTop: 6 } }, jsonProblem)
+          : h('div', { role: 'status', style: { fontSize: 12, opacity: 0.65, marginTop: 6 } },
+            `${t('jsonPreview')} · ${json.server.serverName} · ${json.server.transport === 'stdio' ? json.server.command : json.server.url}`)
+
+      const fields = mode === 'json'
+        ? [
+          h(Field, { key: 'json', label: t('modeJson'), hint: editing ? t('jsonEditHint') : t('jsonHint') },
+            h('textarea', {
+              style: { ...fieldStyle, minHeight: 190, fontFamily: 'ui-monospace, monospace' },
+              value: jsonText,
+              placeholder: JSON_PLACEHOLDER,
+              spellCheck: false,
+              onChange: event => onJsonChange(event.target.value),
+            }),
+            jsonPreview),
+        ]
+        : [
+          h('div', {
+            key: 'identity',
+            style: { display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' },
+          },
           h('div', { style: { flex: '1 1 200px', minWidth: 0 } },
             h(Field, { label: t('fieldName'), hint: editing ? undefined : t('fieldNameHint') },
               h('input', {
@@ -419,52 +810,76 @@ window.__ModuleLoader__.load({
               }))),
           h('div', { style: { flex: '1 1 160px', minWidth: 0 } },
             h(Field, { label: t('fieldTransport') },
-              h('select', { style: fieldStyle, value: transport, onChange: event => setTransport(event.target.value) },
-                h('option', { value: 'stdio' }, t('transportStdio')),
-                h('option', { value: 'streamable-http' }, t('transportHttp'))))),
+              h(Select, {
+                options: [
+                  { value: 'stdio', label: t('transportStdio') },
+                  { value: 'streamable-http', label: t('transportHttp') },
+                ],
+                value: transport,
+                onChange: setTransport,
+                ariaLabel: t('fieldTransport'),
+                block: true,
+              }))),
           h('div', { style: { flex: '0 0 150px' } },
             h(Field, { label: t('fieldTimeout') },
               h('input', {
                 style: fieldStyle, value: timeout,
                 onChange: event => setTimeoutMs(event.target.value.replace(/[^0-9]/gu, '')),
               })))),
+          ...transport === 'stdio'
+            ? [
+              h(Field, { key: 'command', label: t('fieldCommand') },
+                h('input', {
+                  style: fieldStyle, value: command, placeholder: 'npx',
+                  onChange: event => setCommand(event.target.value),
+                })),
+              h(Field, { key: 'args', label: t('fieldArgs') },
+                h('input', {
+                  style: fieldStyle, value: args,
+                  placeholder: '-y @modelcontextprotocol/server-memory',
+                  onChange: event => setArgs(event.target.value),
+                })),
+              h(Field, { key: 'env', label: t('fieldEnv'), hint: t('secretHint') },
+                h('textarea', {
+                  style: { ...fieldStyle, minHeight: 70, fontFamily: 'ui-monospace, monospace' },
+                  value: env, onChange: event => setEnv(event.target.value),
+                })),
+            ]
+            : [
+              h(Field, { key: 'url', label: t('fieldUrl') },
+                h('input', {
+                  style: fieldStyle, value: url, placeholder: 'https://example.com/mcp',
+                  onChange: event => setUrl(event.target.value),
+                })),
+              h(Field, { key: 'headers', label: t('fieldHeaders'), hint: t('secretHint') },
+                h('textarea', {
+                  style: { ...fieldStyle, minHeight: 70, fontFamily: 'ui-monospace, monospace' },
+                  value: headers, onChange: event => setHeaders(event.target.value),
+                })),
+            ],
+        ]
 
-        transport === 'stdio'
-          ? [
-            h(Field, { key: 'command', label: t('fieldCommand') },
-              h('input', {
-                style: fieldStyle, value: command, placeholder: 'npx',
-                onChange: event => setCommand(event.target.value),
-              })),
-            h(Field, { key: 'args', label: t('fieldArgs') },
-              h('input', {
-                style: fieldStyle, value: args,
-                placeholder: '-y @modelcontextprotocol/server-memory',
-                onChange: event => setArgs(event.target.value),
-              })),
-            h(Field, { key: 'cwd', label: t('fieldCwd') },
-              h('input', {
-                style: fieldStyle, value: cwd, placeholder: '/absolute/working/directory',
-                onChange: event => setCwd(event.target.value),
-              })),
-            h(Field, { key: 'env', label: t('fieldEnv'), hint: t('secretHint') },
-              h('textarea', {
-                style: { ...fieldStyle, minHeight: 70, fontFamily: 'ui-monospace, monospace' },
-                value: env, onChange: event => setEnv(event.target.value),
-              })),
-          ]
-          : [
-            h(Field, { key: 'url', label: t('fieldUrl') },
-              h('input', {
-                style: fieldStyle, value: url, placeholder: 'https://example.com/mcp',
-                onChange: event => setUrl(event.target.value),
-              })),
-            h(Field, { key: 'headers', label: t('fieldHeaders'), hint: t('secretHint') },
-              h('textarea', {
-                style: { ...fieldStyle, minHeight: 70, fontFamily: 'ui-monospace, monospace' },
-                value: headers, onChange: event => setHeaders(event.target.value),
-              })),
-          ],
+      const saveBlocked = busy || jsonProblem !== undefined
+
+      return h('div', { style: { maxWidth: 880 } },
+        h('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22 } },
+          h('div', null,
+            h('div', { style: { fontSize: 20, fontWeight: 600, marginBottom: 6 } },
+              editing ? t('editTitle') : t('createTitle')),
+            h('div', { style: { fontSize: 13, opacity: 0.65 } },
+              editing ? t('editHint') : t('createHint'))),
+          h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, opacity: 0.8, flexShrink: 0 } },
+            t('fieldScope'),
+            h(Select, {
+              options: scopeChoices,
+              value: scope,
+              onChange: setScope,
+              ariaLabel: t('fieldScope'),
+              style: { width: 'auto', minWidth: 190 },
+            }))),
+
+        modes,
+        fields,
 
         failure === ''
           ? null
@@ -474,13 +889,37 @@ window.__ModuleLoader__.load({
           h('button', { style: buttonStyle, disabled: busy, onClick: onCancel }, t('cancel')),
           h('button', {
             style: {
-              ...buttonStyle, fontWeight: 600, opacity: busy ? 0.6 : 1,
+              ...buttonStyle, fontWeight: 600, opacity: saveBlocked ? 0.6 : 1,
               background: 'color-mix(in srgb, currentColor 16%, transparent)',
             },
-            disabled: busy,
+            disabled: saveBlocked,
             onClick: () => { void submit() },
           }, busy ? t('saving') : t('save'))),
       )
+    }
+
+    /**
+     * The handshake reading taken for one mount when the page was opened.
+     *
+     * The official client reports a failed connection only to the Host log, so
+     * a mount whose tools never arrived is otherwise indistinguishable from a
+     * working one. A probe asked for by hand supersedes this line: it is the
+     * newer reading and the one the person asked for.
+     *
+     * @param health - the `health` field of the row, when present.
+     * @param probe - the row's manual probe state, when one ran.
+     * @param t - the bound dictionary.
+     * @returns the line element, or null when there is nothing to report.
+     */
+    function pageCheckLine(health, probe, t) {
+      if (health?.reachable === undefined) return null
+      if (probe !== undefined && probe.busy !== true) return null
+      return h('div', {
+        style: {
+          marginTop: 10, fontSize: 12, whiteSpace: 'pre-wrap',
+          color: health.reachable === true ? '#30a46c' : '#e5484d',
+        },
+      }, `${health.reachable === true ? t('reachable') : t('unreachable')} (${t('pageCheck')}) — ${health.detail ?? ''}`)
     }
 
     /**
@@ -492,11 +931,24 @@ window.__ModuleLoader__.load({
       const { t, server, probe, pending, trial, trialResult, trialBusy, handlers } = props
       const isGlobal = server.scope === 'global'
       const scopeBadge = isGlobal ? t('global') : `${t('workspace')} · ${props.titleOf(server.scope)}`
+      const tools = server.tools ?? []
+      const health = server.health ?? undefined
+      // Registered tools and a completed handshake are the only proof of a
+      // connection this page holds: the official client connects in the
+      // background and publishes no status, so a mount is called connected only
+      // when its tools arrived, the page's own check completed a handshake, or
+      // a probe asked for by hand did. A mount with none of those is still
+      // connecting, and one whose handshake failed is unreachable — never
+      // connected.
       const status = !server.enabled
         ? { text: `○ ${t('disabled')}`, color: undefined }
-        : server.mounted
-          ? { text: `● ${t('mounted')}`, color: '#30a46c' }
-          : { text: `○ ${t('mountFailed')}`, color: '#e5484d' }
+        : server.mounted !== true
+          ? { text: `○ ${t('mountFailed')}`, color: '#e5484d' }
+          : tools.length > 0 || health?.reachable === true || probe?.reachable === true
+            ? { text: `● ${t('connected')}`, color: '#30a46c' }
+            : health?.reachable === false || probe?.reachable === false
+              ? { text: `○ ${t('unreachable')}`, color: '#e5484d' }
+              : { text: `◐ ${t('connecting')}`, color: '#f5a623' }
       const target = server.transport === 'stdio'
         ? `${server.command} ${(server.args ?? []).join(' ')}`.trim()
         : server.url
@@ -520,7 +972,7 @@ window.__ModuleLoader__.load({
         h('span', { key: 'scope', style: chipStyle }, scopeBadge),
         h('span', { key: 'status', style: { ...chipStyle, color: status.color } }, status.text),
         h('span', { key: 'tools', style: chipStyle },
-          `${(server.tools ?? []).length} ${t('tools')}`),
+          `${tools.length} ${t('tools')}`),
       ]
       if (server.mounted && (server.sessions ?? 0) > 0) {
         chips.push(h('span', {
@@ -610,6 +1062,8 @@ window.__ModuleLoader__.load({
           },
         }, `${probe.reachable === true ? t('reachable') : t('unreachable')} — ${probe.detail ?? ''}`),
 
+      pageCheckLine(health, probe, t),
+
       trial === undefined
         ? null
         : h('div', { style: { marginTop: 12, borderTop: border, paddingTop: 12 } },
@@ -618,12 +1072,14 @@ window.__ModuleLoader__.load({
             ? h('div', { style: { fontSize: 12, opacity: 0.6 } }, t('trialNoTools'))
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
               h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialTool'),
-                h('select', {
-                  style: { ...fieldStyle, marginTop: 4 },
-                  value: trial.toolName,
-                  onChange: event => handlers.onTrialChange({ ...trial, toolName: event.target.value }),
-                }, (server.tools ?? []).map(toolName =>
-                  h('option', { key: toolName, value: toolName }, toolName)))),
+                h('div', { style: { marginTop: 4 } },
+                  h(Select, {
+                    options: (server.tools ?? []).map(toolName => ({ value: toolName, label: toolName })),
+                    value: trial.toolName,
+                    onChange: toolName => handlers.onTrialChange({ ...trial, toolName }),
+                    ariaLabel: t('trialTool'),
+                    block: true,
+                  }))),
               h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialArgs'),
                 h('textarea', {
                   style: { ...fieldStyle, marginTop: 4, minHeight: 60, fontFamily: 'ui-monospace, monospace' },
@@ -675,7 +1131,7 @@ window.__ModuleLoader__.load({
      * @returns the page element.
      */
     function ScopeSection(props) {
-      const { t, load, create, update, toggle, remove, probe, callTool } = props
+      const { t, load, create, update, toggle, remove, probe, verify, callTool } = props
       const [state, setState] = useState(undefined)
       const [failure, setFailure] = useState('')
       const [form, setForm] = useState(undefined)
@@ -696,7 +1152,32 @@ window.__ModuleLoader__.load({
         }
       }, [load])
 
-      useEffect(() => { void refresh() }, [refresh])
+      // The Host publishes no connection state for a mount whose tools never
+      // arrived — the official client reports that failure to its log alone —
+      // so a row is read once, when this section is opened. This component is
+      // the MCP page itself: the Settings shell renders only the active
+      // section, so the check runs when the person navigates here and not when
+      // the Settings dialog opens on its default section. Nothing repeats on
+      // its own either — a row already read, or one with tools, is left as it
+      // is, and the person's own 探测 is what asks again.
+      const openPage = useCallback(async () => {
+        try {
+          const first = await load()
+          setState(first)
+          setFailure('')
+          const unread = (first.servers ?? [])
+            .filter(server => server.enabled === true && server.mounted === true
+              && (server.tools ?? []).length === 0 && (server.health ?? null) === null)
+            .map(server => server.serverName)
+          if (unread.length === 0) return
+          await verify(unread)
+          setState(await load())
+        } catch (error) {
+          setFailure(error instanceof Error ? error.message : String(error))
+        }
+      }, [load, verify])
+
+      useEffect(() => { void openPage() }, [openPage])
 
       const workspaces = state?.workspaces ?? []
       const titleOf = useMemo(() => {
@@ -761,6 +1242,9 @@ window.__ModuleLoader__.load({
           h(ServerForm, {
             t,
             workspaces,
+            // A server created while the list is filtered to one workspace
+            // starts in it: the filter is what the person is looking at.
+            defaultScope: scopeFilter,
             initial: form === null ? undefined : form,
             onCancel: () => setForm(undefined),
             onSubmit: async (server) => {
@@ -772,16 +1256,15 @@ window.__ModuleLoader__.load({
           }))
       }
 
-      const scopeOptions = [
-        h('option', { key: 'global', value: 'global' }, t('global')),
+      const scopeChoices = [
+        { value: 'global', label: t('global') },
         // Registered workspaces first, then any other scope a server already
         // stores: a scope survives its workspace leaving the registry, and a
         // filter that could not reach it would hide the server.
         ...[...new Set([
           ...workspaces.map(workspace => workspace.path),
           ...servers.map(server => server.scope).filter(scope => scope !== 'global'),
-        ])].map(path =>
-          h('option', { key: path, value: path }, `${t('workspace')} · ${titleOf(path)}`)),
+        ])].map(path => ({ value: path, label: `${t('workspace')} · ${titleOf(path)}` })),
       ]
 
       return h('div', { style: { padding: '4px 2px' } },
@@ -789,21 +1272,20 @@ window.__ModuleLoader__.load({
 
         // ── scope selector · count · search ──────────────────────────────────
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 22 } },
-          h('div', {
-            style: {
-              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-              border, borderRadius: 999, opacity: 0.9,
-            },
-          },
-          h(ScreenGlyph, { size: 15 }),
-          h('select', {
-            style: {
-              border: 'none', background: 'transparent', color: 'inherit', font: 'inherit',
-              fontSize: 13, outline: 'none', cursor: 'pointer', maxWidth: 220,
-            },
+          // The trigger IS the pill: a menu measures its anchor, so a pill
+          // wrapped around the trigger opened the card to the right of the
+          // click target instead of under it.
+          h(Select, {
+            options: scopeChoices,
             value: scopeFilter,
-            onChange: event => setScopeFilter(event.target.value),
-          }, scopeOptions)),
+            onChange: setScopeFilter,
+            ariaLabel: t('fieldScope'),
+            icon: h(ScreenGlyph, { size: 15 }),
+            style: {
+              width: 'auto', maxWidth: 260, padding: '6px 12px', borderRadius: 999,
+              background: 'transparent', fontSize: 13, opacity: 0.9,
+            },
+          }),
           h('div', { style: { fontSize: 13, opacity: 0.75 } },
             `${t('count')} ${state === undefined ? 0 : inScope.length}`),
           h('div', { style: { flex: '1 1 180px', minWidth: 0, display: 'flex', justifyContent: 'flex-end' } },
@@ -939,6 +1421,7 @@ window.__ModuleLoader__.load({
         toggle: (serverName, enabled) => request('POST', '/servers/toggle', { serverName, enabled }),
         remove: serverName => request('POST', '/servers/delete', { serverName }),
         probe: serverName => request('POST', '/servers/probe', { serverName }),
+        verify: serverNames => request('POST', '/servers/verify', { serverNames }),
         callTool: (serverName, toolName, argumentsJson) =>
           request('POST', '/servers/call', { serverName, toolName, argumentsJson, sessionId: sessionId() }),
       })

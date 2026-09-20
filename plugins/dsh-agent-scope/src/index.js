@@ -36,10 +36,11 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import * as toolSubagent from '@deepseek-ai/dsh-tool-subagent'
+import { GLOBAL_SCOPE, canonical, inScope, normalizeScope } from './scope.js'
 
 export const name = 'agent-scope'
 
@@ -51,9 +52,6 @@ const GUARD_HEADER = 'x-dsh-agent-scope'
 
 /** Cap on one request body, in bytes. */
 const MAX_BODY_BYTES = 256 * 1024
-
-/** The one scope value meaning "every workspace". */
-const GLOBAL_SCOPE = 'global'
 
 /** Sub-agent name contract: it becomes the model-facing tool name. */
 const NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
@@ -81,47 +79,6 @@ function dshHome() {
 function storePathOf(config) {
   const configured = typeof config?.storePath === 'string' ? config.storePath.trim() : ''
   return configured === '' ? join(dshHome(), 'agent-scope.json') : resolve(configured)
-}
-
-/**
- * Canonicalize a directory path so scope comparison survives symlinks.
- * @param path - candidate path.
- * @returns the realpath when it exists, otherwise the resolved path.
- */
-function canonical(path) {
-  const resolved = resolve(path)
-  try {
-    return realpathSync(resolved)
-  } catch {
-    // A workspace directory can be deleted while its record survives; the
-    // resolved spelling is then the best identity available.
-    return resolved
-  }
-}
-
-/**
- * Whether a session cwd falls inside a workspace scope.
- * @param cwd - canonical session cwd, or '' when the header carries none.
- * @param scope - absolute workspace path.
- * @returns true when the session runs in that workspace or below it.
- */
-function inScope(cwd, scope) {
-  if (cwd === '') return false
-  const target = canonical(scope)
-  return cwd === target || cwd.startsWith(target.endsWith(sep) ? target : target + sep)
-}
-
-/**
- * Normalize one scope value.
- * @param value - 'global' or an absolute directory path.
- * @returns the normalized scope.
- */
-function normalizeScope(value) {
-  if (value === undefined || value === null || value === '') return GLOBAL_SCOPE
-  const text = String(value).trim()
-  if (text === GLOBAL_SCOPE) return GLOBAL_SCOPE
-  if (!text.startsWith('/')) throw new Error('a workspace scope must be an absolute path')
-  return resolve(text)
 }
 
 /**
