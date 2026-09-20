@@ -7,6 +7,10 @@ packages:
   - native/system/packages/*
   # Product assemblies over the package tier; apps/cli owns the `dsh` bin.
   - apps/*
+  # This fork's own plugins: plain-JavaScript bundles committed beside the
+  # harness. The web-app bundle patch mounts them, so workspace membership is
+  # what lets a profile boot resolve their bare row names.
+  - plugins/*
   # Private package owning repository-level benchmark dependencies.
   - benchmarks
   - website

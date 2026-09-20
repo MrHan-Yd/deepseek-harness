@@ -177,12 +177,14 @@ All routes require the platform fence and the `x-dsh-agent-scope: 1` header.
 
 ## Install
 
+This fork mounts the plugin in its default web composition: `plugins/*` are pnpm workspace packages, and `packages/bundle/web-app/cordis.patch.yml` inserts the `agent-scope` row, so `pnpm dsh web` serves the page from a checkout with no per-machine install step. Restart the host after changing the plugin: the client half is part of the boot payload generated at server start, so a browser reload alone will not add the page.
+
+A profile may still install the bundle explicitly. The row id is the same, and the Loader mounts one entry per id, so installing it beside the bundle patch is harmless:
+
 ```sh
 pnpm dsh plugin --profile web add link:/absolute/path/to/plugins/dsh-agent-scope
 ```
 
-Then add `dsh-agent-scope` to `dsh.profile.bundles` in the profile's `package.json` and restart the host. The client half ships as a startup-time roster entry, so a browser refresh alone does not reveal the page.
-
 ## Why this lives in `plugins/` and not `packages/`
 
-`plugins/` is outside the pnpm workspace globs and the coverage gate, and its runtime files sit under `src/` rather than `lib/` (the repository root ignores `lib/`). The plugin is plain, directly auditable ESM with no build step, so `src/` is both the source and the artifact a reviewer reads.
+`plugins/` is outside the `packages/*/*` tier and its coverage gate, and its runtime files sit under `src/` rather than `lib/` (the repository root ignores `lib/`). The pnpm workspace lists `plugins/*` only so a profile boot can resolve the row name; that membership grants resolution and nothing else. The plugin is plain, directly auditable ESM with no build step, so `src/` is both the source and the artifact a reviewer reads.

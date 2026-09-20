@@ -135,16 +135,18 @@ A credential key submitted with an empty value keeps its stored value: the page 
 
 ## Install
 
+This fork mounts the plugin in its default web composition: `plugins/*` are pnpm workspace packages, and `packages/bundle/web-app/cordis.patch.yml` inserts the `mcp-scope` row, so `pnpm dsh web` serves the page from a checkout with no per-machine install step. Restart the host after changing the plugin: the client half is part of the boot payload generated at server start, so a browser reload alone will not add the page.
+
+A profile may still install the bundle explicitly. The row id is the same, and the Loader mounts one entry per id, so installing it beside the bundle patch is harmless:
+
 ```sh
 dsh plugin --profile <profile> add /absolute/path/to/deepseek-harness/plugins/dsh-mcp-scope
 ```
-
-The package declares `dsh.bundle`, so the profile appends it to `dsh.profile.bundles` and mounts it. Restart `dsh web` afterwards: the client half is part of the boot payload generated at server start, so a browser reload alone will not add the page.
 
 This plugin takes no build step: `src/index.js`, `src/probe.js`, and `src/client.js` are the shipped sources.
 
 ## Why this lives in `plugins/` and not `packages/`
 
-It is plain JavaScript with no build step, no `tsconfig` program, and no test suite, which the `packages/*/*` tier requires — the repository's per-file 100% coverage gate, its package-dependency and client-package verifiers, and its bilingual README rules all apply there. Keeping the plugin under `plugins/` lets it be committed alongside a fork of DSH without either side pretending the other's contract holds: the root `.gitignore` ignores `lib/`, so the runtime directory is named `src/` here to make clear that these files are the sources, not build output.
+It is plain JavaScript with no build step, no `tsconfig` program, and no test suite, which the `packages/*/*` tier requires — the repository's per-file 100% coverage gate, its package-dependency and client-package verifiers, and its bilingual README rules all apply there. The pnpm workspace lists `plugins/*` only so a profile boot can resolve the row name; that membership grants resolution and nothing else. Keeping the plugin under `plugins/` lets it be committed alongside a fork of DSH without either side pretending the other's contract holds: the root `.gitignore` ignores `lib/`, so the runtime directory is named `src/` here to make clear that these files are the sources, not build output.
 
 Promoting it to a native package means converting it to TypeScript, adding the test suite the coverage gate demands, wiring a `tsconfig` program and the aggregate references, and either shipping it as its own bundle or contributing it to `packages/bundle/web-app`.

@@ -67,7 +67,11 @@ node --test "plugins/dsh-usage-stats/tests/*.test.mjs"
 
 ## Install
 
-The plugin is a bundle, so a profile mounts it by name:
+This fork mounts the plugin in its default web composition: `plugins/*` are pnpm workspace packages, and `packages/bundle/web-app/cordis.patch.yml` inserts the `usage-stats` row, so `pnpm dsh web` serves the page from a checkout with no per-machine install step. Restart the host after changing the plugin: the client half is part of the boot payload generated at server start, so a browser reload alone will not add the page.
+
+The Host half requires the `sessionQuery` service, which `@deepseek-ai/dsh-base` already mounts through `@deepseek-ai/dsh-session-query-sqlite`; the plugin refuses to load without it rather than serving empty figures.
+
+A profile may still install the bundle explicitly. The row id is the same, and the Loader mounts one entry per id, so installing it beside the bundle patch is harmless:
 
 ```jsonc
 // ~/.dsh/profiles/<profile>/package.json
@@ -83,7 +87,7 @@ The plugin is a bundle, so a profile mounts it by name:
 }
 ```
 
-Then `pnpm install` in the profile directory and restart `dsh web`. The Host half requires the `sessionQuery` service, which `@deepseek-ai/dsh-base` already mounts through `@deepseek-ai/dsh-session-query-sqlite`; the plugin refuses to load without it rather than serving empty figures.
+Then `pnpm install` in the profile directory and restart `dsh web`.
 
 ## Why this lives in `plugins/` and not `packages/`
 

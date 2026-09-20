@@ -67,7 +67,11 @@ node --test "plugins/dsh-usage-stats/tests/*.test.mjs"
 
 ## 安装
 
-本插件是一个 bundle，profile 按名字挂载它：
+本 fork 把它挂进了默认的 Web 组合：`plugins/*` 是 pnpm workspace 包，`packages/bundle/web-app/cordis.patch.yml` 插入了 `usage-stats` 那一行，所以从检出目录直接 `pnpm dsh web` 就有这个页面，不需要在每台机器上各装一次。改动插件后要重启宿主：浏览器那一半属于服务启动时生成的 boot payload，只刷新浏览器不会加上这个页面。
+
+宿主侧依赖 `sessionQuery` 服务，而 `@deepseek-ai/dsh-base` 已经通过 `@deepseek-ai/dsh-session-query-sqlite` 挂载了它；取不到时插件会拒绝加载，而不是端出一堆空数字。
+
+profile 也仍然可以显式安装这个 bundle。行 id 相同，而 Loader 对每个 id 只挂载一个条目，所以和 bundle patch 一起装上没有副作用：
 
 ```jsonc
 // ~/.dsh/profiles/<profile>/package.json
@@ -83,7 +87,7 @@ node --test "plugins/dsh-usage-stats/tests/*.test.mjs"
 }
 ```
 
-然后在 profile 目录里 `pnpm install` 并重启 `dsh web`。宿主侧依赖 `sessionQuery` 服务，而 `@deepseek-ai/dsh-base` 已经通过 `@deepseek-ai/dsh-session-query-sqlite` 挂载了它；取不到时插件会拒绝加载，而不是端出一堆空数字。
+然后在 profile 目录里 `pnpm install` 并重启 `dsh web`。
 
 ## 为什么它放在 `plugins/` 而不是 `packages/`
 

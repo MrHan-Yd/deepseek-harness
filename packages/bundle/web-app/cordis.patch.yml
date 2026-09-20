@@ -514,3 +514,25 @@
       name: '@deepseek-ai/dsh-agent-presets'
       config:
         default: standard
+
+# ── this fork's own plugins ─────────────────────────────────────────────────
+#
+# The three plain-JavaScript bundles committed under `plugins/` are part of the
+# default web composition: they are workspace packages, so a profile boot links
+# them through the computed resolution generation, and mounting their rows here
+# is what puts their Settings pages (MCP servers, sub-agents, usage statistics)
+# on every profile built on this bundle — web and desktop alike — with no
+# per-machine `dsh plugin add`.
+#
+# Each host half is inert on a Harness home with no stores, and each client half
+# waits on the `settings.section` declaration before contributing its page, so
+# this block adds no ordering constraint. A profile that also installs one of
+# these bundles separately inserts the same row id; the Loader mounts one entry
+# per id, so the duplicate layer is harmless.
+- insert:
+    - id: mcp-scope
+      name: dsh-mcp-scope
+    - id: agent-scope
+      name: dsh-agent-scope
+    - id: usage-stats
+      name: dsh-usage-stats

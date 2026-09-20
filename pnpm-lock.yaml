@@ -2304,6 +2304,15 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+      dsh-agent-scope:
+        specifier: workspace:^
+        version: link:../../../plugins/dsh-agent-scope
+      dsh-mcp-scope:
+        specifier: workspace:^
+        version: link:../../../plugins/dsh-mcp-scope
+      dsh-usage-stats:
+        specifier: workspace:^
+        version: link:../../../plugins/dsh-usage-stats
       open:
         specifier: ^11.0.0
         version: 11.0.0
@@ -12411,6 +12420,12 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: workspace:^
         version: link:../../typert/protocol
+
+  plugins/dsh-agent-scope: {}
+
+  plugins/dsh-mcp-scope: {}
+
+  plugins/dsh-usage-stats: {}
 
   python/sdk-runtime:
     dependencies:
