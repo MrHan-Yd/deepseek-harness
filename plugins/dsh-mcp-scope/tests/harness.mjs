@@ -111,10 +111,20 @@ export function loadBundle() {
   const dictionaries = {}
   let section
   let registration
+  let triggerSource
   const ctx = {
     effect: (fn) => fn(),
     on: () => () => {},
     get: () => undefined,
+    inject: (names, register) => {
+      if (names.includes('inputTriggers')) {
+        register({
+          effect: (fn) => fn(),
+          inputTriggers: { registerSource: (source) => { triggerSource = source; return () => {} } },
+        })
+      }
+      return () => {}
+    },
     locale: {
       register: (namespace, dictionary) => { dictionaries[namespace] = dictionary; return () => {} },
       bind: (namespace) => (key) => dictionaries[namespace]?.zh?.[key] ?? key,
@@ -137,6 +147,7 @@ export function loadBundle() {
     calls,
     state,
     section,
+    triggerSource,
     props: { t: ctx.locale.bind('settings.mcpScope'), ...registration.inject() },
   }
 }

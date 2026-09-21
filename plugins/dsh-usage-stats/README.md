@@ -23,10 +23,10 @@ Folding anything else would disagree with the per-Session figure the chat page s
 | Region | What it shows |
 |---|---|
 | Five cards | Cumulative tokens, the single highest day, the longest Session span, and the current and longest activity streaks |
-| Token 活动 | A 53-week heatmap with 每日 / 每周 / 累计 modes. A cell is lit only for a day that actually spent tokens; the mode chooses the scale — that day, its week, or the running total — so a week used on two days shows two lit cells, never seven. Each tooltip names the day and, off 每日, the scale's total |
+| Token 活动 | A 53-week heatmap with 每日 / 每周 / 累计 modes. A cell is lit only for a day that actually spent tokens; the mode chooses the scale — that day, its week, or the running total — so a week used on two days shows two lit cells, never seven. Hovering a cell names the day and, beneath it, the day's tokens and its closed turns (`1.5亿 tokens · 66 轮消息`), plus the scale's total off 每日 |
 | 时间范围 | 近 7 日 / 近 30 日, which drives the trend chart below it |
-| 每日 Token 趋势图 | One line per model over the selected range; ranks past six models fold into one 其他 line |
-| 模型用量 | A donut of each model's share with its percentage and token count |
+| 每日 Token 趋势图 | One line per model over the selected range; ranks past six models fold into one 其他 line. Hovering draws a guide line on that day and a card titled `<月日> - <当天总量> tokens`, listing every model that spent on it — colour dot, name, and that day's tokens — largest first |
+| 模型用量 | A donut of each model's share with its percentage and token count. Hovering a slice or a legend row names the model over its colour dot, reports `<该模型 tokens> <占比>` beneath it, and dims the rest |
 | 刷新 | Re-reads the Session corpus, bypassing the memo and the fold cache |
 
 Numbers are formatted with `Intl`, so a Chinese locale writes `3.6亿` and an English one `360M`; switching language reformats without a reload.
@@ -41,7 +41,7 @@ The page talks to the Host half over same-origin routes under `/usage-stats`. Ev
 
 | Route | Returns |
 |---|---|
-| `GET /usage-stats/api/summary` | Totals, the per-day buckets, the per-model rows, and one row per Session |
+| `GET /usage-stats/api/summary` | Totals, the per-day buckets (tokens, per-model tokens, and closed turns), the per-model rows, and one row per Session |
 | `GET /usage-stats/api/summary?refresh=1` | The same payload with the five-second memo bypassed |
 
 ## Security
@@ -59,7 +59,7 @@ The page is read-only: no route mutates a Session, a setting, or a file.
 
 ## Tests
 
-`tests/fold.test.mjs` pins the attribution rules against an in-memory Session corpus — model switching, replacement, retry, stream-chunk usage, local-day bucketing, session spans, skipped Sessions, the fold cache's reuse and retention, and the trust fence:
+`tests/fold.test.mjs` pins the attribution rules against an in-memory Session corpus — model switching, replacement, retry, stream-chunk usage, local-day bucketing, the per-day turn count, session spans, skipped Sessions, the fold cache's reuse and retention, and the trust fence. `tests/charts.client.test.mjs` boots the browser half in jsdom with a stubbed summary and drives the three hover readouts: a heatmap cell names its day and reads out the day's tokens and turns, a trend band titles the day with its total and lists the models that spent on it, and a donut slice reports its own tokens and share.
 
 ```sh
 node --test "plugins/dsh-usage-stats/tests/*.test.mjs"

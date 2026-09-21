@@ -36,7 +36,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import * as toolSubagent from '@deepseek-ai/dsh-tool-subagent'
@@ -59,9 +59,6 @@ const NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
 /** Prompt-section name this plugin owns inside one agent's scope. */
 const SECTION_NAME = 'agent-scope:catalog'
 
-/** Instruction file appended to a definition's system prompt when injection is on. */
-const INSTRUCTION_FILE = 'AGENTS.md'
-
 /**
  * Resolve the harness home directory.
  * @returns the absolute `$DSH_HOME`, or `~/.dsh` when unset.
@@ -82,35 +79,6 @@ function storePathOf(config) {
 }
 
 /**
- * Read the instruction file a definition would inject.
- * @param definition - the validated definition.
- * @returns the absolute path and whether it exists.
- */
-function instructionFileOf(definition) {
-  const path = definition.scope === GLOBAL_SCOPE
-    ? join(dshHome(), INSTRUCTION_FILE)
-    : join(definition.scope, INSTRUCTION_FILE)
-  return { path, exists: existsSync(path) }
-}
-
-/**
- * Read the injected instruction text, tolerating an unreadable file.
- * @param definition - the validated definition.
- * @returns the file's text, or '' when absent or unreadable.
- */
-function instructionTextOf(definition) {
-  const file = instructionFileOf(definition)
-  if (!file.exists) return ''
-  try {
-    return readFileSync(file.path, 'utf8').trim()
-  } catch (error) {
-    // An unreadable instruction file only costs the definition its injected
-    // text; failing the mount over it would take the whole sub-agent offline.
-    return ''
-  }
-}
-
-/**
  * Validate one incoming definition record from the Settings page.
  * @param input - raw record.
  * @returns the normalized definition record.
@@ -128,7 +96,6 @@ function validateAgent(input) {
     scope: normalizeScope(input.scope),
     enabled: input.enabled !== false,
     systemPrompt: typeof input.systemPrompt === 'string' ? input.systemPrompt : '',
-    injectAgentsMd: input.injectAgentsMd === true,
     model: null,
     tools: { mode: 'all', allow: [] },
   }
@@ -157,21 +124,16 @@ function validateAgent(input) {
  *
  * The official row's `persona` shadows `deployment:persona-prefix` for the
  * child alone, so an empty persona is omitted entirely: a definition that sets
- * neither a system prompt nor instruction injection must leave the deployment
- * persona in place rather than blank it.
+ * no system prompt must leave the deployment persona in place rather than blank
+ * it. Workspace instruction files are not read here — the deployment's own
+ * `dsh-agent-instructions` row already injects the `AGENTS.md` chain for the
+ * child's inherited cwd.
  *
  * @param definition - the validated definition.
  * @returns the persona text, or '' when the definition contributes none.
  */
 function personaOf(definition) {
-  const parts = []
-  const prompt = definition.systemPrompt.trim()
-  if (prompt !== '') parts.push(prompt)
-  if (definition.injectAgentsMd) {
-    const instructions = instructionTextOf(definition)
-    if (instructions !== '') parts.push(instructions)
-  }
-  return parts.join('\n\n')
+  return definition.systemPrompt.trim()
 }
 
 /**
@@ -1177,11 +1139,6 @@ export async function apply(ctx, config) {
                 mounted: runtime.mounts.has(definition.name),
                 mountError: runtime.mountErrors.get(definition.name) ?? null,
                 sessions: counts.get(definition.name) ?? 0,
-                instructionFile: instructionFileOf(definition),
-                // Character count of the persona this definition mounts, so a
-                // surface can tell instruction injection apart from an
-                // instruction file that resolved to nothing.
-                personaChars: personaOf(definition).length,
               })),
               liveSessions: runtime.sessionSummaries(),
               workspaces: workspaceList(scope),

@@ -49,8 +49,11 @@ const API_PATH = '/usage-stats'
 /** Request header a cross-origin page cannot set without a granted preflight. */
 const GUARD_HEADER = 'x-dsh-usage-stats'
 
-/** Cache file schema version; a mismatch discards the whole file. */
-const CACHE_VERSION = 1
+/**
+ * Cache file schema version; a mismatch discards the whole file. Version 2 adds
+ * the per-day turn count the heatmap's readout reports.
+ */
+const CACHE_VERSION = 2
 
 /** How long one collected summary serves later reads, in milliseconds. */
 const SUMMARY_TTL_MS = 5000
@@ -180,6 +183,13 @@ function foldSession(snapshot) {
   const models = {}
   /** Newest sample per settled turn/step, so a re-report replaces it. */
   const slots = new Map()
+  /**
+   * The day each turn's latest sample landed on. A turn is counted where it
+   * spent, so a turn that closes after midnight still counts beside the tokens
+   * it produced instead of leaving a lit day with no turns and a quiet one with
+   * turns but no spend.
+   */
+  const turnDays = new Map()
   let provider = null
   let model = null
   let lastAt = createdAt
@@ -193,7 +203,7 @@ function foldSession(snapshot) {
    * @param sign - 1 to add, -1 to remove a replaced sample.
    */
   const post = (day, key, buckets, sign) => {
-    const dayRow = days[day] ?? (days[day] = { tokens: 0, models: {} })
+    const dayRow = days[day] ?? (days[day] = { tokens: 0, models: {}, turns: 0 })
     const modelRow = models[key] ?? (models[key] = emptyModel(provider))
     if (modelRow.provider === null && provider !== null) modelRow.provider = provider
     for (const bucket of BUCKETS) {
@@ -217,6 +227,16 @@ function foldSession(snapshot) {
       if (slot !== null) slots.delete(slot)
       continue
     }
+    // A closed turn is the day's activity independent of what it spent: it is
+    // what the heatmap's readout reports beside the tokens.
+    if (event?.type === 'turn/end') {
+      const turn = event.data?.turn
+      const spentOn = typeof turn === 'number' ? turnDays.get(turn) : undefined
+      const day = spentOn ?? dateKeyOf(typeof time === 'number' ? time : createdAt)
+      const dayRow = days[day] ?? (days[day] = { tokens: 0, models: {}, turns: 0 })
+      dayRow.turns += 1
+      continue
+    }
 
     const usage = usageOf(event)
     if (usage === undefined) continue
@@ -235,6 +255,7 @@ function foldSession(snapshot) {
     post(day, key, buckets, 1)
     models[key].requests += 1
     samples += 1
+    if (typeof event.data?.turn === 'number') turnDays.set(event.data.turn, day)
     if (slot !== null) slots.set(slot, { day, model: key, buckets })
   }
 
@@ -401,8 +422,9 @@ async function collectSummary(query, cache, root) {
     }
     sessions.push({ id, cwd: fold.cwd, createdAt: fold.createdAt, lastAt: fold.lastAt, tokens: sumFold(fold) })
     for (const [day, row] of Object.entries(fold.days)) {
-      const target = days[day] ?? (days[day] = { tokens: 0, models: {} })
+      const target = days[day] ?? (days[day] = { tokens: 0, models: {}, turns: 0 })
       target.tokens += row.tokens
+      target.turns += row.turns ?? 0
       for (const [model, tokens] of Object.entries(row.models)) {
         target.models[model] = (target.models[model] ?? 0) + tokens
       }

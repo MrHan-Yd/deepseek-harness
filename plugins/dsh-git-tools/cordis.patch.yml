@@ -1,0 +1,6 @@
+# dsh-git-tools bundle patch: mount the floating git panel and its API.
+# An id-targeted override in the profile's cordis.patch.yml replaces the whole
+# config row, so restate every key when overriding.
+- insert:
+    - id: git-tools
+      name: dsh-git-tools

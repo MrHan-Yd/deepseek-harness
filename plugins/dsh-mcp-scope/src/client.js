@@ -1326,6 +1326,85 @@ window.__ModuleLoader__.load({
     /** Services the page reads. */
     const inject = ['slots', 'locale', 'sessions']
 
+    /** How one server's row reads in the menu: its transport target. */
+    function targetOf(server) {
+      return server.transport === 'stdio'
+        ? `${server.command} ${(server.args ?? []).join(' ')}`.trim()
+        : server.url
+    }
+
+    /**
+     * The `/` source that completes a server name written inside a draft.
+     *
+     * The host command source owns a leading `/`: picking there starts the
+     * server's delegated child, so the command claims the composer for its task
+     * and — for exactly that reason — the menu withholds every argument-taking
+     * command once the caret leaves the head of the draft. A server name is
+     * also the model-facing tool namespace the child is granted, so `/name`
+     * written inside a sentence is text the model reads and acts on. This
+     * source supplies what the host source withholds: the same names, listed
+     * inline, settled by inserting the name as plain text so the rest of the
+     * draft stays exactly as typed.
+     *
+     * @returns the source registration.
+     */
+    function serverNameSource() {
+      /** Servers eligible for a command, as the last read returned them. */
+      let entries
+      /** In-flight read, shared so concurrent keystrokes issue one request. */
+      let pending
+      const load = (refresh) => {
+        if (pending !== undefined) return pending
+        if (entries !== undefined && refresh !== true) return Promise.resolve()
+        pending = request('GET', '/state').then(
+          (state) => {
+            entries = (state.servers ?? [])
+              // A server without a usable command name, or one whose name is
+              // already taken, never registers a command: naming it in a draft
+              // would offer the model something no tool answers to.
+              .filter(server => server.enabled !== false
+                && server.commandName !== null
+                && server.commandConflict !== true)
+              .map(server => ({ name: server.commandName, description: targetOf(server) }))
+          },
+          () => {
+            // An unreadable list costs the menu its completions, never the
+            // composer: the source answers from what it already holds.
+          },
+        ).then(() => { pending = undefined })
+        return pending
+      }
+      return {
+        trigger: '/',
+        name: 'mcp',
+        async candidates(_session, req) {
+          // The head of the draft belongs to the host command source, which runs
+          // the server instead of naming it.
+          if (req.position !== 'inline') return []
+          // The menu just opened: re-read so a server saved in Settings appears
+          // without a reload, and answer this keystroke from the list already
+          // in hand.
+          if (req.query === '') void load(true)
+          await load(false)
+          const query = req.query.toLowerCase()
+          return (entries ?? [])
+            .filter(entry => query === '' || entry.name.toLowerCase().includes(query))
+            .map(entry => ({
+              name: entry.name,
+              ...(entry.description === '' || entry.description === undefined
+                ? {}
+                : { description: entry.description }),
+            }))
+        },
+        onPick(pick) {
+          // The server name, which is also the command name: the draft reaches
+          // the model, which reaches the server through the tool namespace.
+          return { text: `/${pick.candidate.name} ` }
+        },
+        warm() { void load(false) },
+      }
+    }
+
     /**
      * Register the Settings page.
      * @param ctx - the client plugin context.
@@ -1333,6 +1412,12 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-mcp-scope: dictionaries')
       ctx.effect(() => followServerCommands(ctx), 'dsh-mcp-scope: follow server commands')
+      ctx.inject(['inputTriggers'], (scope) => {
+        scope.effect(
+          () => scope.inputTriggers.registerSource(serverNameSource()),
+          'dsh-mcp-scope: inline server names',
+        )
+      })
       const t = ctx.locale.bind(NS)
       const injected = () => ({
         load: () => request('GET', '/state'),

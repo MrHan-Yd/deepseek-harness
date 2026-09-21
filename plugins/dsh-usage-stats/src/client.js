@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
       range30: '近 30 日',
       trend: '每日 Token 趋势图',
       models: '模型用量',
+      unitTurns: '轮消息',
       unitTokens: 'tokens',
       unitHour: '小时',
       unitMinute: '分钟',
@@ -76,6 +77,7 @@ window.__ModuleLoader__.load({
       range30: 'Last 30 days',
       trend: 'Daily token trend',
       models: 'Model usage',
+      unitTurns: 'rounds',
       unitTokens: 'tokens',
       unitHour: 'h',
       unitMinute: 'm',
@@ -271,12 +273,91 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The card a chart shows while the pointer is on one of its marks.
+     *
+     * It is positioned from the mark's own place in the chart rather than from
+     * the pointer, so it holds still while the pointer moves inside one band,
+     * and it never takes pointer events: the mark underneath keeps them.
+     *
+     * @param props - the tip, or null while no mark is hovered. A tip is
+     *   `{ x, align, top, dot, title, lines, rows }`: `title` may carry a
+     *   leading colour dot, `lines` are plain sentences, and `rows` are the
+     *   labelled grid a breakdown uses.
+     * @returns the card element, or null.
+     */
+    function HoverCard(props) {
+      const { tip } = props
+      if (tip === null || tip === undefined) return null
+      const rows = tip.rows ?? []
+      const lines = tip.lines ?? []
+      return h('div', {
+        style: {
+          position: 'absolute', left: `${tip.x}%`, top: tip.top ?? 0,
+          transform: `translate(${tip.align ?? '-50%'}, 0)`,
+          zIndex: 6, pointerEvents: 'none', maxWidth: 280, padding: '8px 10px',
+          borderRadius: 8, border, background: 'var(--dsw-alias-bg-overlay)',
+          boxShadow: '0 8px 24px rgba(0,0,0,.28)', fontSize: 12, lineHeight: 1.5, whiteSpace: 'nowrap',
+        },
+      },
+      tip.title === undefined || tip.title === ''
+        ? null
+        : h('div', {
+          style: {
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginBottom: rows.length === 0 && lines.length === 0 ? 0 : 6,
+            fontWeight: tip.dot === undefined ? undefined : 600,
+          },
+        },
+        tip.dot === undefined
+          ? null
+          : h('span', { style: { width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: tip.dot } }),
+        h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' } }, tip.title)),
+      lines.map((line, at) => h('div', { key: `line-${at}` }, line)),
+      rows.length === 0
+        ? null
+        : h('div', {
+          style: {
+            display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center', gap: '3px 8px',
+          },
+        }, rows.flatMap(row => [
+          h('span', {
+            key: `${row.label}-dot`,
+            style: {
+              width: 8, height: 8, borderRadius: 4, flexShrink: 0,
+              background: row.color ?? 'currentColor',
+              opacity: row.color === undefined ? 0.4 : 1,
+              visibility: row.color === undefined ? 'hidden' : 'visible',
+            },
+          }),
+          h('span', { key: `${row.label}-name`, style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' } }, row.label),
+          h('span', {
+            key: `${row.label}-value`,
+            style: { opacity: 0.85, fontVariantNumeric: 'tabular-nums' },
+          }, row.value),
+        ])))
+    }
+
+    /**
+     * Where one band's card sits, kept inside the chart at both ends.
+     * @param index - the band index.
+     * @param count - how many bands the chart has.
+     * @returns the `x` percent and the transform that keeps the card inside.
+     */
+    function tipAnchor(index, count) {
+      const x = count <= 1 ? 50 : (index / (count - 1)) * 100
+      if (index === 0 && count > 1) return { x, align: '0' }
+      if (index === count - 1 && count > 1) return { x, align: '-100%' }
+      return { x, align: '-50%' }
+    }
+
+    /**
      * The year-long token activity heatmap.
      * @param props - day buckets, the selected mode, and the bound translator.
      * @returns the heatmap element.
      */
     function Heatmap(props) {
       const { days, mode, t, locale } = props
+      const [hovered, setHovered] = useState(null)
       const today = shiftDays(new Date(), 0)
       const todayKey = dayKey(today.getTime())
       const first = startOfWeek(shiftDays(today, -7 * (WEEKS - 1)))
@@ -306,7 +387,7 @@ window.__ModuleLoader__.load({
             weekTokens += row?.tokens ?? 0
             const cumulative = cumulativeOf(key)
             if (cumulative > peakCumulative) peakCumulative = cumulative
-            cells.push({ key, future: key > todayKey, cumulative, daily: row?.tokens ?? 0 })
+            cells.push({ key, future: key > todayKey, cumulative, daily: row?.tokens ?? 0, turns: row?.turns ?? 0 })
           }
           built.push({ cells, weekTokens, month: new Intl.DateTimeFormat(locale, { month: 'short' }).format(shiftDays(first, week * 7)) })
         }
@@ -335,12 +416,29 @@ window.__ModuleLoader__.load({
       const pitch = CELL + CELL_GAP
       const labelHeight = 14
       const modeLabel = mode === 'weekly' ? t('modeWeekly') : t('modeCumulative')
-      return h('svg', {
-        viewBox: `0 0 ${WEEKS * pitch} ${labelHeight + 7 * pitch}`,
-        width: '100%',
-        role: 'img',
-        'aria-label': t('activity'),
-      },
+      const tip = hovered === null ? null : {
+        ...tipAnchor(hovered.at, columns.length),
+        top: 0,
+        title: new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' })
+          .format(new Date(`${hovered.key}T00:00:00`)),
+        // The day's own numbers, the way the reference reads: the spend, then
+        // what it took to make it. Off the daily scale the mode's total follows.
+        lines: [
+          [
+            `${compact(locale, hovered.daily)} ${t('unitTokens')}`,
+            `${hovered.turns} ${t('unitTurns')}`,
+            ...(mode === 'daily' ? [] : [`${modeLabel} ${compact(locale, hovered.value)}`]),
+          ].join(' · '),
+        ],
+      }
+      return h('div', { style: { position: 'relative' } },
+        h('svg', {
+          viewBox: `0 0 ${WEEKS * pitch} ${labelHeight + 7 * pitch}`,
+          width: '100%',
+          role: 'img',
+          'aria-label': t('activity'),
+          onMouseLeave: () => { setHovered(null) },
+        },
         columns.map((column, at) => h('g', { key: at },
           at === 0 || column.month !== columns[at - 1].month
             ? h('text', {
@@ -355,15 +453,19 @@ window.__ModuleLoader__.load({
             // never paints a day that was not used, which is what made a week
             // look active on all seven of its days.
             const level = cell.daily > 0 ? levelOf(value) : 0
-            const day = `${cell.key} · ${compact(locale, cell.daily)} ${t('unitTokens')}`
             return h('rect', {
               key: cell.key,
               x: at * pitch, y: labelHeight + row * pitch, width: CELL, height: CELL, rx: 2.5,
               fill: cell.future ? 'transparent' : fillOf(level),
               stroke: cell.key === todayKey ? PALETTE[0] : 'none',
               strokeWidth: cell.key === todayKey ? 1 : 0,
-            }, h('title', null, mode === 'daily' ? day : `${day} · ${modeLabel} ${compact(locale, value)}`))
-          }))))
+              // The whole year is one SVG, so a cell reads itself out through
+              // this card: a native `<title>` here arrives late, unstyled, and
+              // only for the pointer resting on the cell.
+              onMouseOver: () => { setHovered({ at, key: cell.key, daily: cell.daily, turns: cell.turns, value }) },
+            })
+          })))),
+        h(HoverCard, { tip }))
     }
 
     /**
@@ -373,6 +475,7 @@ window.__ModuleLoader__.load({
      */
     function TrendChart(props) {
       const { days, series, range, t, locale } = props
+      const [hovered, setHovered] = useState(null)
       const width = 760
       const height = 220
       const pad = { left: 58, right: 14, top: 12, bottom: 28 }
@@ -397,6 +500,21 @@ window.__ModuleLoader__.load({
       const ticks = Array.from({ length: 4 }, (_, at) => (peak / 3) * at)
 
       const empty = values.every(row => row.every(value => value === 0))
+      // One invisible band per date carries the hover: it is the mark the person
+      // is pointing at, so the card can hold still inside a band instead of
+      // chasing the pointer, and the readout needs no geometry from the DOM.
+      const band = dates.length <= 1 ? plotWidth : plotWidth / (dates.length - 1)
+      const dayTotal = (at) => series.reduce((sum, _, index) => sum + values[index][at], 0)
+      const tip = hovered === null || dates[hovered] === undefined ? null : {
+        ...tipAnchor(hovered, dates.length),
+        top: 0,
+        title: `${new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(dates[hovered])} - ${compact(locale, dayTotal(hovered))} ${t('unitTokens')}`,
+        rows: series
+          .map((entry, index) => ({ color: entry.color, label: entry.label, tokens: values[index][hovered] }))
+          .filter(row => row.tokens > 0)
+          .sort((left, right) => right.tokens - left.tokens)
+          .map(row => ({ color: row.color, label: row.label, value: `${compact(locale, row.tokens)} ${t('unitTokens')}` })),
+      }
       return h('div', null,
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 10 } },
           series.map(entry => h('span', { key: entry.key, style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, opacity: 0.8 } },
@@ -404,7 +522,11 @@ window.__ModuleLoader__.load({
             entry.label))),
         empty
           ? h('div', { style: { fontSize: 12, opacity: 0.55, padding: '40px 0', textAlign: 'center' } }, t('emptyTrend'))
-          : h('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, role: 'img', 'aria-label': t('trend') },
+          : h('div', { style: { position: 'relative' } },
+            h('svg', {
+              viewBox: `0 0 ${width} ${height}`, width: '100%', height, role: 'img', 'aria-label': t('trend'),
+              onMouseLeave: () => { setHovered(null) },
+            },
             ticks.map((tick, at) => h('g', { key: at },
               h('line', {
                 x1: pad.left, x2: width - pad.right, y1: yOf(tick), y2: yOf(tick),
@@ -420,12 +542,25 @@ window.__ModuleLoader__.load({
                 fill: 'currentColor', fillOpacity: 0.55,
               }, new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(date))
             }),
+            hovered === null
+              ? null
+              : h('line', {
+                x1: xOf(hovered), x2: xOf(hovered), y1: pad.top, y2: pad.top + plotHeight,
+                stroke: 'currentColor', strokeOpacity: 0.35, strokeDasharray: '3 3',
+              }),
             values.map((row, at) => h('polyline', {
               key: series[at].key,
               points: row.map((value, index) => `${xOf(index)},${yOf(value)}`).join(' '),
               fill: 'none', stroke: series[at].color, strokeWidth: 2,
               strokeLinejoin: 'round', strokeLinecap: 'round',
-            }))) )
+            })),
+            dates.map((_, at) => h('rect', {
+              key: `band-${at}`,
+              x: Math.max(0, xOf(at) - band / 2), y: pad.top,
+              width: band, height: plotHeight, fill: 'transparent',
+              onMouseOver: () => { setHovered(at) },
+            }))),
+            h(HoverCard, { tip })))
     }
 
     /**
@@ -435,29 +570,53 @@ window.__ModuleLoader__.load({
      */
     function Donut(props) {
       const { series, total, t, locale } = props
+      const [hovered, setHovered] = useState(null)
       const size = 220
       const radius = 74
       const stroke = 26
       const circumference = 2 * Math.PI * radius
       let offset = 0
 
+      const share = (tokens) => (total === 0 ? 0 : tokens / total)
+      const percent = (tokens) => `${total === 0 ? '0' : (share(tokens) * 100).toFixed(share(tokens) < 0.1 ? 1 : 0)}%`
+      const entry = hovered === null ? undefined : series.find(row => row.key === hovered)
+      // The card sits in the ring's own box, over the slice being read: the
+      // legend beside it already lists every model, so the hover answers "how
+      // much of the whole is this slice" rather than repeating the list.
+      const tip = entry === undefined ? null : {
+        x: 50,
+        align: '-50%',
+        top: 8,
+        dot: entry.color,
+        title: entry.label,
+        // The reference's two lines: what this slice spent, and how much of the
+        // whole that is.
+        rows: [{ label: `${compact(locale, entry.tokens)} ${t('unitTokens')}`, value: percent(entry.tokens) }],
+      }
+
       return h('div', { style: { display: 'flex', alignItems: 'center', gap: 28, flexWrap: 'wrap' } },
-        h('div', { style: { position: 'relative', width: size, height: size, flexShrink: 0 } },
+        h('div', {
+          style: { position: 'relative', width: size, height: size, flexShrink: 0 },
+          onMouseLeave: () => { setHovered(null) },
+        },
           h('svg', { viewBox: `0 0 ${size} ${size}`, width: size, height: size, role: 'img', 'aria-label': t('models') },
             h('circle', {
               cx: size / 2, cy: size / 2, r: radius, fill: 'none',
               stroke: 'color-mix(in srgb, currentColor 8%, transparent)', strokeWidth: stroke,
             }),
-            series.map((entry) => {
-              const fraction = total === 0 ? 0 : entry.tokens / total
+            series.map((row) => {
+              const fraction = total === 0 ? 0 : row.tokens / total
               const dash = fraction * circumference
               const element = h('circle', {
-                key: entry.key,
+                key: row.key,
                 cx: size / 2, cy: size / 2, r: radius, fill: 'none',
-                stroke: entry.color, strokeWidth: stroke,
+                stroke: row.color, strokeWidth: stroke,
                 strokeDasharray: `${dash} ${circumference - dash}`,
                 strokeDashoffset: -offset,
                 transform: `rotate(-90 ${size / 2} ${size / 2})`,
+                // A slice with no width has no stroke to point at, which is
+                // right: an empty model holds no share to read out.
+                onMouseOver: dash === 0 ? undefined : () => { setHovered(row.key) },
               })
               offset += dash
               return element
@@ -469,15 +628,21 @@ window.__ModuleLoader__.load({
             },
           },
             h('div', { style: { fontSize: 18, fontWeight: 600 } }, compact(locale, total)),
-            h('div', { style: { fontSize: 11, opacity: 0.55 } }, t('unitTokens')))),
+            h('div', { style: { fontSize: 11, opacity: 0.55 } }, t('unitTokens'))),
+          h(HoverCard, { tip })),
         h('div', { style: { flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 } },
-          series.map(entry => h('div', { key: entry.key, style: { minWidth: 0 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 } },
-              h('span', { style: { width: 8, height: 8, borderRadius: 4, background: entry.color, flexShrink: 0 } }),
-              h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, entry.label),
-              h('span', { style: { opacity: 0.85 } }, `${total === 0 ? '0' : ((entry.tokens / total) * 100).toFixed(entry.tokens / total < 0.1 ? 1 : 0)}%`)),
-            h('div', { style: { fontSize: 12, opacity: 0.55, marginTop: 3, marginLeft: 16 } },
-              `${compact(locale, entry.tokens)} ${t('unitTokens')}`)))))
+          series.map(row => h('div', {
+            key: row.key,
+            style: { minWidth: 0, opacity: hovered === null || hovered === row.key ? 1 : 0.55 },
+            onMouseOver: () => { setHovered(row.key) },
+            onMouseLeave: () => { setHovered(null) },
+          },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 } },
+            h('span', { style: { width: 8, height: 8, borderRadius: 4, background: row.color, flexShrink: 0 } }),
+            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, row.label),
+            h('span', { style: { opacity: 0.85 } }, percent(row.tokens))),
+          h('div', { style: { fontSize: 12, opacity: 0.55, marginTop: 3, marginLeft: 16 } },
+            `${compact(locale, row.tokens)} ${t('unitTokens')}`)))))
     }
 
     /**

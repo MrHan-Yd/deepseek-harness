@@ -48,6 +48,9 @@ const attempt = (time, turn, step, usage) => ({ type: 'assistant/attempt', seq: 
 /** @param time - event time. @param turn - turn. @param step - step. */
 const retryStarted = (time, turn, step) => ({ type: 'llm/retry-started', seq: 4, time, data: { turn, step } })
 
+/** @param time - event time. @param turn - turn. @returns a closed-turn event. */
+const turnEnd = (time, turn) => ({ type: 'turn/end', seq: 5, time, data: { turn, reason: { kind: 'completed' } } })
+
 /** @param input - input tokens. @param output - output tokens. @param cacheRead - cache-read tokens. */
 const usage = (input, output, cacheRead = 0) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, totalTokens: input + output + cacheRead })
 
@@ -151,6 +154,27 @@ test('buckets samples onto the local calendar day that reported them', async () 
   }])
   assert.deepEqual(Object.keys(summary.days).sort(), ['2026-09-18', '2026-09-19'])
   assert.equal(summary.days['2026-09-18'].tokens, 2)
+  assert.equal(summary.days['2026-09-19'].tokens, 4)
+})
+
+test('counts each closed turn on the day it spent, across midnight', async () => {
+  const spent = new Date(2026, 8, 18, 23, 59, 0).getTime()
+  const closed = new Date(2026, 8, 19, 0, 1, 0).getTime()
+  const summary = await collect([{
+    header: header('s1', at(9)),
+    events: [
+      context(spent, 'model-a'),
+      message(spent, 1, 1, usage(1, 1)),
+      turnEnd(closed, 1),
+      message(at(10), 2, 1, usage(2, 2)),
+      turnEnd(at(10), 2),
+      // A turn that spent nothing still counts, on the day it closed.
+      turnEnd(at(10), 3),
+    ],
+  }])
+  assert.equal(summary.days['2026-09-18'].turns, 1, 'the turn that spent on the 18th counts there, though it closed after midnight')
+  assert.equal(summary.days['2026-09-18'].tokens, 2)
+  assert.equal(summary.days['2026-09-19'].turns, 2, 'the turn that spent on the 19th, and the one that spent nothing')
   assert.equal(summary.days['2026-09-19'].tokens, 4)
 })
 

@@ -78,8 +78,6 @@ window.__ModuleLoader__.load({
       toolsNone: '当前没有可列出的工具。先打开一个会话，让预设组合注册工具后再回到这里。',
       fieldSystemPrompt: '系统提示词',
       systemPromptPlaceholder: '描述这个子智能体的角色、边界和规则...',
-      fieldInject: '注入 AGENTS.md',
-      injectHint: '把指令文件的内容附加到该子智能体的系统提示词。',
       fieldScope: '作用域',
       scopeHint: '选择该子智能体在哪些会话中可见。',
       save: '保存',
@@ -91,10 +89,6 @@ window.__ModuleLoader__.load({
       toolsAllBadge: '全部工具',
       toolsBadge: '个工具',
       errorPrefix: '操作失败',
-      instructionFound: '指令文件',
-      instructionMissing: '未找到指令文件',
-      injectBadge: 'AGENTS.md 已注入',
-      injectBadgeMissing: 'AGENTS.md 文件不存在',
       mountError: '装载原因',
       storeAt: '配置存储',
       footerHint: '作用域为「全局」的子智能体对所有会话可见；作用域为某个工作区的只在该工作区的会话中可见。每个子智能体以同名工具提供给模型。',
@@ -140,8 +134,6 @@ window.__ModuleLoader__.load({
       toolsNone: 'No tools to list yet. Open a session so a preset composition registers its tools, then come back.',
       fieldSystemPrompt: 'System prompt',
       systemPromptPlaceholder: 'Describe this sub-agent’s role, boundaries, and rules…',
-      fieldInject: 'Inject AGENTS.md',
-      injectHint: 'Appends the instruction file to this sub-agent’s system prompt.',
       fieldScope: 'Scope',
       scopeHint: 'Choose which sessions can see this sub-agent.',
       save: 'Save',
@@ -153,10 +145,6 @@ window.__ModuleLoader__.load({
       toolsAllBadge: 'all tools',
       toolsBadge: 'tools',
       errorPrefix: 'Failed',
-      instructionFound: 'Instruction file',
-      instructionMissing: 'No instruction file at',
-      injectBadge: 'AGENTS.md injected',
-      injectBadgeMissing: 'AGENTS.md missing',
       mountError: 'Mount reason',
       storeAt: 'Config store',
       footerHint: 'A sub-agent scoped to Global is visible to every session; one scoped to a workspace is visible only to sessions running in it. Each sub-agent is offered to the model as a tool of the same name.',
@@ -327,7 +315,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Render the switch used by the enable and injection toggles.
+     * Render the switch used by a row's enable toggle.
      * @param props - checked state, tooltip, and change handler.
      * @returns the switch element.
      */
@@ -427,7 +415,6 @@ window.__ModuleLoader__.load({
       const [toolMode, setToolMode] = useState(initial?.tools?.mode ?? 'all')
       const [allowed, setAllowed] = useState(() => new Set(initial?.tools?.allow ?? []))
       const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? '')
-      const [inject, setInject] = useState(initial?.injectAgentsMd === true)
       const [busy, setBusy] = useState(false)
       const [failure, setFailure] = useState('')
 
@@ -451,7 +438,6 @@ window.__ModuleLoader__.load({
             scope,
             description,
             systemPrompt,
-            injectAgentsMd: inject,
             enabled: initial?.enabled !== false,
             model: at < 0 ? null : { provider: route.slice(0, at), model: route.slice(at + 1) },
             tools: toolMode === 'all'
@@ -596,21 +582,6 @@ window.__ModuleLoader__.load({
             onChange: event => setSystemPrompt(event.target.value),
           })),
 
-        h('div', {
-          style: {
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
-            border, borderRadius: 12, padding: '12px 14px', marginBottom: 18,
-          },
-        },
-        h('div', null,
-          h('div', { style: { fontSize: 13, fontWeight: 600 } }, t('fieldInject')),
-          h('div', { style: { fontSize: 11, opacity: 0.5, marginTop: 3 } }, t('injectHint')),
-          initial === undefined
-            ? null
-            : h('div', { style: { fontSize: 11, opacity: 0.5, marginTop: 3, fontFamily: 'ui-monospace, monospace' } },
-              `${initial.instructionFile?.exists === true ? t('instructionFound') : t('instructionMissing')}: ${initial.instructionFile?.path ?? ''}`)),
-        h(Switch, { checked: inject, onChange: setInject })),
-
         failure === ''
           ? null
           : h('div', { style: { color: '#e5484d', fontSize: 13, marginBottom: 12 } }, failure),
@@ -650,13 +621,6 @@ window.__ModuleLoader__.load({
             ? `${(agent.tools.allow ?? []).length} ${t('toolsBadge')}`
             : t('toolsAllBadge')),
       ]
-      if (agent.injectAgentsMd) {
-        const present = agent.instructionFile?.exists === true
-        badges.push(h('span', {
-          key: 'agents',
-          style: { ...chipStyle, color: present ? undefined : '#e5484d', opacity: present ? 0.75 : 0.9 },
-        }, present ? t('injectBadge') : t('injectBadgeMissing')))
-      }
       if (agent.mounted && (agent.sessions ?? 0) > 0) {
         badges.push(h('span', {
           key: 'sessions',
@@ -933,12 +897,83 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The `/` source that completes a sub-agent name written inside a draft.
+     *
+     * The host command source owns a leading `/`: picking there runs that
+     * sub-agent, so the command claims the composer for its task and — for
+     * exactly that reason — the menu withholds every argument-taking command
+     * once the caret leaves the head of the draft. A definition's name is also
+     * the tool name the model delegates through, so a `/name` written inside a
+     * sentence is text the model reads and acts on. This source supplies what
+     * the host source withholds: the same names, listed inline, settled by
+     * inserting the catalog name as plain text so the rest of the draft stays
+     * exactly as typed.
+     *
+     * @returns the source registration.
+     */
+    function subagentNameSource() {
+      /** Definitions eligible for delegation, as the last read returned them. */
+      let entries
+      /** In-flight read, shared so concurrent keystrokes issue one request. */
+      let pending
+      const load = (refresh) => {
+        if (pending !== undefined) return pending
+        if (entries !== undefined && refresh !== true) return Promise.resolve()
+        pending = request('GET', '/state').then(
+          (state) => {
+            entries = (state.agents ?? [])
+              .filter(agent => agent.enabled !== false)
+              .map(agent => ({ name: agent.name, description: agent.description ?? '' }))
+          },
+          () => {
+            // An unreadable list costs the menu its completions, never the
+            // composer: the source answers from what it already holds.
+          },
+        ).then(() => { pending = undefined })
+        return pending
+      }
+      return {
+        trigger: '/',
+        name: 'subagent',
+        async candidates(_session, req) {
+          // The head of the draft belongs to the host command source, which runs
+          // the definition instead of naming it.
+          if (req.position !== 'inline') return []
+          // The menu just opened: re-read so a definition saved in Settings
+          // appears without a reload, and answer this keystroke from the list
+          // already in hand.
+          if (req.query === '') void load(true)
+          await load(false)
+          const query = req.query.toLowerCase()
+          return (entries ?? [])
+            .filter(entry => query === '' || entry.name.toLowerCase().includes(query))
+            .map(entry => ({
+              name: entry.name,
+              ...(entry.description === '' ? {} : { description: entry.description }),
+            }))
+        },
+        onPick(pick) {
+          // The catalog name, never a localized alias: the draft reaches the
+          // model, which delegates by the tool's own name.
+          return { text: `/${pick.candidate.name} ` }
+        },
+        warm() { void load(false) },
+      }
+    }
+
+    /**
      * Register the Settings page.
      * @param ctx - the client plugin context.
      */
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-agent-scope: dictionaries')
       ctx.effect(() => followSubagentCommands(ctx), 'dsh-agent-scope: follow sub-agent commands')
+      ctx.inject(['inputTriggers'], (scope) => {
+        scope.effect(
+          () => scope.inputTriggers.registerSource(subagentNameSource()),
+          'dsh-agent-scope: inline sub-agent names',
+        )
+      })
       const t = ctx.locale.bind(NS)
       const injected = () => ({
         load: () => request('GET', '/state'),

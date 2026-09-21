@@ -100,10 +100,20 @@ function loadBundle() {
   const dictionaries = {}
   let section
   let registration
+  let triggerSource
   const ctx = {
     effect: (fn) => fn(),
     on: () => () => {},
     get: () => undefined,
+    inject: (names, register) => {
+      if (names.includes('inputTriggers')) {
+        register({
+          effect: (fn) => fn(),
+          inputTriggers: { registerSource: (source) => { triggerSource = source; return () => {} } },
+        })
+      }
+      return () => {}
+    },
     locale: {
       register: (namespace, dictionary) => { dictionaries[namespace] = dictionary; return () => {} },
       bind: (namespace) => (key) => dictionaries[namespace]?.zh?.[key] ?? key,
@@ -124,6 +134,7 @@ function loadBundle() {
     posts,
     state,
     section,
+    triggerSource,
     props: { t: ctx.locale.bind('settings.agentScope'), ...registration.inject() },
   }
 }
@@ -183,7 +194,6 @@ test('the sub-agent editor opens its dropdowns instead of native selects', async
       scope: 'D:/ws',
       description: '',
       systemPrompt: '',
-      injectAgentsMd: false,
       enabled: true,
       model: { provider: 'ds', model: 'deepseek-v4' },
       tools: { mode: 'all', allow: [] },
@@ -206,8 +216,6 @@ test('delete on a sub-agent row arms before it deletes', async () => {
     description: 'A demanding reviewer.',
     model: null,
     tools: { mode: 'all', allow: [] },
-    injectAgentsMd: false,
-    instructionFile: { exists: true },
   }]
   const { React, createRoot, document } = bundle
   const act = React.act ?? (async (fn) => { await fn() })
@@ -252,8 +260,6 @@ test('a row does not repeat the slash command its name already is', async () => 
     description: 'A demanding reviewer.',
     model: null,
     tools: { mode: 'all', allow: [] },
-    injectAgentsMd: false,
-    instructionFile: { exists: true },
   }]
   const { React, createRoot, document } = bundle
   const act = React.act ?? (async (fn) => { await fn() })
@@ -304,4 +310,49 @@ test('a definition created under a scope filter starts in that scope', async () 
 
   await act(async () => { root.unmount() })
   container.remove()
+})
+
+test('the composer completes a sub-agent name written inside a sentence', async () => {
+  const bundle = loadBundle()
+  bundle.state.agents = [
+    { name: 'code-reviewer', description: 'A demanding reviewer.', enabled: true },
+    { name: 'system-architect', description: 'Designs the topology.', enabled: true },
+    { name: 'retired', description: '', enabled: false },
+  ]
+  const source = bundle.triggerSource
+  assert.ok(source, 'the plugin registers a `/` source')
+  assert.equal(source.trigger, '/')
+  // The group title is the shared `slash.menu` dictionary's own key.
+  assert.equal(source.name, 'subagent')
+
+  const req = (query, position) => ({ query, position, drilled: false, signal: new AbortController().signal })
+
+  // The head of the draft belongs to the host command source, which runs the
+  // definition; this source would only name it, so it stays out of the way.
+  assert.deepEqual(await source.candidates({}, req('', 'leading')), [])
+
+  // Opening the menu lists every enabled definition with its description.
+  const all = await source.candidates({}, req('', 'inline'))
+  assert.deepEqual(all.map(row => row.name), ['code-reviewer', 'system-architect'])
+  assert.equal(all[0].description, 'A demanding reviewer.')
+
+  const filtered = await source.candidates({}, req('CODE', 'inline'))
+  assert.deepEqual(filtered.map(row => row.name), ['code-reviewer'], 'the query is case-insensitive')
+  assert.deepEqual(await source.candidates({}, req('retired', 'inline')), [], 'a disabled definition is not offered')
+
+  // Picking inserts the catalog name as plain text; the rest of the draft is
+  // not the source's to touch, so a sentence keeps everything around the name.
+  assert.deepEqual(source.onPick({ candidate: { name: 'code-reviewer' } }), { text: '/code-reviewer ' })
+})
+
+test('an unreadable definition list leaves the menu empty, not the composer broken', async () => {
+  const bundle = loadBundle()
+  globalThis.fetch = async () => { throw new Error('offline') }
+  const rows = await bundle.triggerSource.candidates({}, {
+    query: 'code',
+    position: 'inline',
+    drilled: false,
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(rows, [])
 })

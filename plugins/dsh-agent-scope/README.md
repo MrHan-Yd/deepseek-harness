@@ -21,12 +21,14 @@ One stored definition is one mounted row:
     provider: spawn
     toolName: <definition name>
     backgroundMode: continuable
-    persona: <system prompt, plus injected AGENTS.md when enabled>
+    persona: <system prompt>
     toolFilter: { allow: [...] }        # only when tool access is "selected tools"
     agentOptions: { provider, model }   # only when a route is pinned
 ```
 
 Everything after that — provider capability checks, child composition, the depth cap, background settlement, and the continuation inbox — stays owned by the official row. This plugin owns the store, the scope of each definition, the Settings page, and the model-facing catalog described below.
+
+A definition's persona is its system prompt alone. Instruction files are **not** read here: the deployment's own `dsh-agent-instructions` row already injects the `AGENTS.md` chain for every agent, and a child inherits its parent's cwd ([`child-agent.ts`](../../packages/subagent/subagent/src/child-agent.ts)) and preset, so a sub-agent already receives its workspace's instructions with digest-based change tracking and the deployment's byte budget. Reading the file again here would flatten it into the persona at mount time and inject it twice.
 
 `backgroundMode: continuable` matches the deployment's own `subagent` row: a delegation returns a durable child id immediately and the runtime delivers a settlement notice, so a long review never blocks the parent turn. `modelSelectionSettings` stays off because a definition owns a fixed route; the deployment row already registers the one global `list_subagent_models` tool.
 
@@ -63,7 +65,7 @@ Every dropdown — the toolbar's scope selector and the editor's scope and model
 
 ## Tests
 
-`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/select.client.test.mjs` boots the browser half in jsdom and drives the editor's dropdowns: no native select may return, the scope rows follow the workspace registry, and the model list keeps its provider headings and saves the route it selected. It also drives a row's delete button, which arms on the first click and removes on the second.
+`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/select.client.test.mjs` boots the browser half in jsdom and drives the editor's dropdowns: no native select may return, the scope rows follow the workspace registry, and the model list keeps its provider headings and saves the route it selected. It also drives a row's delete button, which arms on the first click and removes on the second, and the plugin's own `/` source — which answers inside a draft and never at its head, and settles a pick by inserting the catalog name as text.
 
 ```sh
 node --test "plugins/dsh-agent-scope/tests/*.test.mjs"
@@ -80,6 +82,15 @@ Every enabled definition is also a command, so a person can wake that sub-agent 
 The command is registered through a child of each agent's own context, which is what scopes it: a session only ever offers the definitions inside its own scope, so the `/` menu lists exactly what that session may use, with each definition's description beside its name. Out-of-scope sub-agents are absent from the menu rather than failing when invoked.
 
 A definition's command declares an input hint, so it needs a task: picking the row from the `/` menu **claims** the command and leaves `/name ` in the composer for the task (its placeholder says so), and only the next Enter dispatches it. Typing the whole line at once — menu closed by the space — dispatches on a single Enter.
+
+A `/name` written **inside a sentence** is a different intent, and the host command source does not offer one: an argument-taking command claims the whole line, so the message it submits is the command alone and anything typed before the name would be discarded. The plugin therefore registers its own `/` source — the menu group 子智能体 — which answers only away from the head of the draft, lists the same enabled definitions, and settles a pick by inserting the catalog name as plain text. This keeps
+
+```
+需求：xxx。先让 /system-architect 设计架构，它出结果后再让 /ui-designer 设计 UI，
+最后交给 /code-reviewer 检查。
+```
+
+as one message: the names reach the model as text, and the model delegates through the tools of the same names. Nothing is claimed and no command runs from the composer. At the head of the draft the source contributes nothing, so a leading `/name` behaves exactly as described above.
 
 In a session that has not produced anything yet, a command still executes host-side, but the Web client has no materialized conversation to render its result into, so only a transient notice shows. Sending the task with the command avoids that: the child it starts gives the session something to render, and the settlement notice then arrives as a normal message.
 
@@ -113,7 +124,6 @@ Definitions live in `$DSH_HOME/agent-scope.json` (override with `storePath` in t
       "scope": "global",
       "enabled": true,
       "systemPrompt": "You review diffs. Report only defects you can point at, with file and line.",
-      "injectAgentsMd": false,
       "model": null,
       "tools": { "mode": "all", "allow": [] }
     },
@@ -124,7 +134,6 @@ Definitions live in `$DSH_HOME/agent-scope.json` (override with `storePath` in t
       "scope": "/Users/you/docs",
       "enabled": true,
       "systemPrompt": "",
-      "injectAgentsMd": true,
       "model": { "provider": "deepseek-official", "model": "deepseek-flash" },
       "tools": { "mode": "custom", "allow": ["glob", "read", "write"] }
     }
@@ -135,15 +144,6 @@ Definitions live in `$DSH_HOME/agent-scope.json` (override with `storePath` in t
 `name` is the model-facing tool name, so it is fixed once created and must match `[a-z][a-z0-9_-]{0,63}`. It may not collide with a tool another plugin registers, including the deployment's own `subagent`, `read`, or `grep`.
 
 `model: null` means the child inherits the parent session's route. `tools.mode: "all"` omits the filter entirely; `"custom"` sends the checked names as the child's `allow` list, which the official row validates at child creation — a name that the child's composition does not register fails that delegation loudly rather than being ignored.
-
-## AGENTS.md injection
-
-`injectAgentsMd` appends the instruction file to the definition's persona, because `persona` shadows `deployment:persona-prefix` for that child alone:
-
-- a **workspace** definition reads `<scope>/AGENTS.md`;
-- a **global** definition reads `$DSH_HOME/AGENTS.md`.
-
-The file is read when the definition is mounted or remounted, so an edit to it takes effect on the next Save or profile restart. A missing file contributes nothing, and the page marks that definition `AGENTS.md 文件不存在` so an injection that resolves to nothing is visible rather than silent. When both the system prompt and the injected text are empty, the plugin omits `persona` entirely — the child keeps the deployment persona instead of having it blanked.
 
 ## `/agents` command (inspection)
 
@@ -181,9 +181,8 @@ All routes require the platform fence and the `x-dsh-agent-scope: 1` header.
 - **Definitions live on the host plane.** They are mounted on the root context, so a session whose scope admits a definition sees its tool regardless of which preset that session runs — including a deliberately minimal preset. This is the same trade-off `dsh-mcp-scope` makes, and it is what allows one definition to serve sessions that different presets compose.
 - **Scope is a stored path, not a workspace id.** Scope comparison uses the same rule DSH uses for workspace membership (canonical session cwd equal to, or below, the scope path). Renaming a workspace on disk leaves the stored path stale until it is edited here.
 - **Custom tool names are validated at child creation, not at Save.** The picker offers what live sessions resolve, but a name that the child's own composition does not register fails that delegation. This is the official row's behavior.
-- **Injected instructions are read at mount time**, not per child. Editing `AGENTS.md` requires a Save or a profile restart.
 - **The catalog section is skipped inside child agents**, so a sub-agent cannot discover sibling definitions — deliberate, matching the depth cap.
-- **No dry-run.** Validating a definition without spending a model call is not offered; the mounted/failed state and the persona size are the diagnostics available.
+- **No dry-run.** Validating a definition without spending a model call is not offered; the mounted/failed state is the only diagnostic available.
 
 ## Install
 

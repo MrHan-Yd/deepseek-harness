@@ -12423,6 +12423,8 @@ importers:
 
   plugins/dsh-agent-scope: {}
 
+  plugins/dsh-git-tools: {}
+
   plugins/dsh-mcp-scope: {}
 
   plugins/dsh-usage-stats: {}
