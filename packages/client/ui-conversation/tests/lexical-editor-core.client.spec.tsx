@@ -7,17 +7,17 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createHeadlessEditor } from '@lexical/headless'
-import type { LexicalEditor, NodeKey, ParagraphNode } from 'lexical'
+import type { LexicalCommand, LexicalEditor, NodeKey, ParagraphNode } from 'lexical'
 import {
-  $createLineBreakNode, $createParagraphNode, $createTextNode, $getRoot, $getSelection,
-  $isTextNode, $setSelection,
+  $createLineBreakNode, $createParagraphNode, $createRangeSelection, $createTextNode, $getRoot, $getSelection,
+  $isRangeSelection, $isTextNode, $setSelection, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND,
 } from 'lexical'
 import type { ReferenceInsert } from '../src/client/contract/draft-editor.ts'
 import {
   $createReferenceChipNode, $isReferenceChipNode, ReferenceChipNode,
 } from '../src/client/input/editor/chip-node.tsx'
 import { registerClaimDecoration } from '../src/client/input/editor/claim-decor.ts'
-import { registerTextRefDecoration, TextRefNode } from '../src/client/input/editor/text-ref.ts'
+import { registerTextRefDecoration, registerTextRefDeletion, TextRefNode } from '../src/client/input/editor/text-ref.ts'
 import type { SerializedReferenceChipNode } from '../src/client/input/editor/chip-node.tsx'
 import {
   $composerLayout, $detectOffsetOfPoint, $projectComposer, ATOMIC_CHAR,
@@ -464,5 +464,200 @@ describe('claim precedence over text-ref entities', () => {
       if ($isTextNode(first)) first.markDirty()
     }, { discrete: true })
     expect(leaf()).toEqual({ type: 'text', style: TOKEN_STYLE, text: token })
+  })
+})
+
+describe('whole-token deletion over text-ref entities', () => {
+  const LEXICON: ReadonlyMap<'/' | '@', readonly string[]> = new Map([['/', ['mcp_thing', 'code-reviewer']]])
+
+  /** One headless editor carrying the text-ref decoration and both gestures. */
+  const makeTokenEditor = (): LexicalEditor => {
+    const editor = makeEditor()
+    registerTextRefDecoration(editor, () => LEXICON, () => null)
+    registerTextRefDeletion(editor)
+    return editor
+  }
+
+  const seed = (editor: LexicalEditor, text: string): void => {
+    editor.update(() => {
+      const paragraph = $createParagraphNode()
+      paragraph.append($createTextNode(text))
+      $getRoot().clear().append(paragraph)
+      paragraph.selectEnd()
+    }, { discrete: true })
+  }
+
+  const draft = (editor: LexicalEditor): string =>
+    editor.getEditorState().read(() => $getRoot().getTextContent())
+
+  const kinds = (editor: LexicalEditor): string[] =>
+    editor.getEditorState().read(() =>
+      ($getRoot().getFirstChild() as ParagraphNode).getChildren().map(node => node.getType()))
+
+  /** Put a collapsed caret inside the draft's token, at one of its two edges. */
+  const caretInToken = (editor: LexicalEditor, edge: 'start' | 'end'): void => {
+    editor.update(() => {
+      const token = ($getRoot().getFirstChild() as ParagraphNode).getChildren()
+        .find(node => node instanceof TextRefNode)
+      if (token === undefined) return
+      const offset = edge === 'start' ? 0 : token.getTextContentSize()
+      token.select(offset, offset)
+    }, { discrete: true })
+  }
+
+  /** A collapsed caret at one offset of the draft's nth child. */
+  const caretInChild = (editor: LexicalEditor, index: number, offset: number): void => {
+    editor.update(() => {
+      const node = ($getRoot().getFirstChild() as ParagraphNode).getChildren()[index]
+      if (node === undefined || !$isTextNode(node)) return
+      node.select(offset, offset)
+    }, { discrete: true })
+  }
+
+  /** One child's text size, read inside an editor read (node methods need one). */
+  const sizeOfChild = (editor: LexicalEditor, index: number): number =>
+    editor.getEditorState().read(() => {
+      const node = ($getRoot().getFirstChild() as ParagraphNode).getChildren()[index]
+      return node === undefined ? 0 : node.getTextContentSize()
+    })
+
+  /** A ranged selection covering the whole token. */
+  const selectToken = (editor: LexicalEditor): void => {
+    editor.update(() => {
+      const token = ($getRoot().getFirstChild() as ParagraphNode).getChildren()
+        .find(node => node instanceof TextRefNode)
+      if (token === undefined) return
+      token.select(0, token.getTextContentSize())
+    }, { discrete: true })
+  }
+
+  /** An element point: the caret parked on the paragraph rather than in a text node. */
+  const selectParagraph = (editor: LexicalEditor): void => {
+    editor.update(() => {
+      const paragraph = $getRoot().getFirstChild() as ParagraphNode
+      const selection = $createRangeSelection()
+      selection.anchor.set(paragraph.getKey(), 0, 'element')
+      selection.focus.set(paragraph.getKey(), 0, 'element')
+      $setSelection(selection)
+    }, { discrete: true })
+  }
+
+  const anchorOf = (editor: LexicalEditor): string =>
+    editor.getEditorState().read(() => {
+      const selection = $getSelection()
+      if (!$isRangeSelection(selection)) return 'none'
+      return `${selection.anchor.type}:${selection.isCollapsed() ? 'collapsed' : 'ranged'}`
+    })
+
+  // A command's update commits on a microtask in a headless editor.
+  const press = async (editor: LexicalEditor, command: LexicalCommand<KeyboardEvent>): Promise<boolean> => {
+    const handled = editor.dispatchCommand(command, new KeyboardEvent('keydown'))
+    await new Promise((resolve) => { setTimeout(resolve, 0) })
+    return handled
+  }
+
+  it('removes a matched token whole rather than one character of it', async () => {
+    const editor = makeTokenEditor()
+    seed(editor, 'hello /mcp_thing')
+
+    // The lexicon match is what makes it a token at all: the plain run beside it
+    // keeps its own text, including the separator space.
+    expect(kinds(editor)).toEqual(['text', 'composer-text-ref'])
+    expect(draft(editor)).toBe('hello /mcp_thing')
+
+    expect(await press(editor, KEY_BACKSPACE_COMMAND)).toBe(true)
+    expect(draft(editor)).toBe('hello ')
+    expect(kinds(editor)).toEqual(['text'])
+  })
+
+  it('takes the token from the edge each gesture moves away from', async () => {
+    // Backspace at the token's start, and Delete at its end, belong to the text
+    // beside it: the default edit keeps both.
+    const backspaceStart = makeTokenEditor()
+    seed(backspaceStart, '/mcp_thing tail')
+    caretInToken(backspaceStart, 'start')
+    expect(await press(backspaceStart, KEY_BACKSPACE_COMMAND)).toBe(false)
+    expect(draft(backspaceStart)).toBe('/mcp_thing tail')
+
+    const deleteEnd = makeTokenEditor()
+    seed(deleteEnd, '/code-reviewer tail')
+    caretInToken(deleteEnd, 'end')
+    expect(await press(deleteEnd, KEY_DELETE_COMMAND)).toBe(false)
+    expect(draft(deleteEnd)).toBe('/code-reviewer tail')
+
+    // The other two edges take the token whole.
+    const backspaceEnd = makeTokenEditor()
+    seed(backspaceEnd, 'hello /mcp_thing')
+    caretInToken(backspaceEnd, 'end')
+    expect(await press(backspaceEnd, KEY_BACKSPACE_COMMAND)).toBe(true)
+    expect(draft(backspaceEnd)).toBe('hello ')
+
+    const deleteStart = makeTokenEditor()
+    seed(deleteStart, '/code-reviewer tail')
+    caretInToken(deleteStart, 'start')
+    expect(await press(deleteStart, KEY_DELETE_COMMAND)).toBe(true)
+    expect(draft(deleteStart)).toBe(' tail')
+  })
+
+  it('reads a caret parked at the neighbour boundary as touching the token', async () => {
+    // Lexical represents the position just before an entity on the node beside
+    // it, so Delete there still removes the token whole.
+    const forward = makeTokenEditor()
+    seed(forward, 'lead /code-reviewer')
+    caretInChild(forward, 0, sizeOfChild(forward, 0))
+    expect(await press(forward, KEY_DELETE_COMMAND)).toBe(true)
+    expect(draft(forward)).toBe('lead ')
+
+    // The same boundary on the other side, for Backspace.
+    const backward = makeTokenEditor()
+    seed(backward, '/mcp_thing tail')
+    caretInChild(backward, 1, 0)
+    expect(await press(backward, KEY_BACKSPACE_COMMAND)).toBe(true)
+    expect(draft(backward)).toBe(' tail')
+
+    // A caret inside the neighbour is nowhere near the token.
+    const inside = makeTokenEditor()
+    seed(inside, 'ab /mcp_thing')
+    caretInChild(inside, 0, 1)
+    expect(await press(inside, KEY_DELETE_COMMAND)).toBe(false)
+    expect(draft(inside)).toBe('ab /mcp_thing')
+  })
+
+  it('leaves every other selection shape to the default edit', async () => {
+    // A ranged selection deletes its own range, not a token.
+    const ranged = makeTokenEditor()
+    seed(ranged, 'hello /mcp_thing')
+    selectToken(ranged)
+    expect(anchorOf(ranged)).toBe('text:ranged')
+    expect(await press(ranged, KEY_BACKSPACE_COMMAND)).toBe(false)
+    expect(draft(ranged)).toBe('hello /mcp_thing')
+
+    // An element point and an absent selection carry no node to read a token from.
+    const element = makeTokenEditor()
+    seed(element, 'hello /mcp_thing')
+    selectParagraph(element)
+    expect(anchorOf(element)).toBe('element:collapsed')
+    expect(await press(element, KEY_BACKSPACE_COMMAND)).toBe(false)
+
+    const absent = makeTokenEditor()
+    seed(absent, 'hello /mcp_thing')
+    absent.update(() => { $setSelection(null) }, { discrete: true })
+    expect(anchorOf(absent)).toBe('none')
+    expect(await press(absent, KEY_BACKSPACE_COMMAND)).toBe(false)
+  })
+
+  it('leaves ordinary text and an unmatched token to the default edit', async () => {
+    const plain = makeTokenEditor()
+    seed(plain, 'plain text here')
+    expect(kinds(plain)).toEqual(['text'])
+    expect(await press(plain, KEY_BACKSPACE_COMMAND)).toBe(false)
+    expect(await press(plain, KEY_DELETE_COMMAND)).toBe(false)
+
+    // Off the lexicon there is no token to remove whole: `/unknown` is prose.
+    const unmatched = makeTokenEditor()
+    seed(unmatched, 'hello /unknown')
+    expect(kinds(unmatched)).toEqual(['text'])
+    expect(await press(unmatched, KEY_BACKSPACE_COMMAND)).toBe(false)
+    expect(draft(unmatched)).toBe('hello /unknown')
   })
 })

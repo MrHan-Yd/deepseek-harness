@@ -34,6 +34,12 @@ test('the composer completes a server name written inside a sentence', async () 
   assert.equal(source.trigger, '/')
   assert.equal(source.name, 'mcp')
 
+  // The roll the draft decorates from is synchronous and fetches nothing: before
+  // the list is read there is nothing to decorate, and a token stays plain text.
+  assert.equal(source.lexicon(), undefined, 'an unread roll decorates nothing')
+  const settled = []
+  const stopWatching = source.subscribeLexicon({}, () => settled.push(source.lexicon()))
+
   // The head of the draft belongs to the host command source, which runs the
   // server; this source would only name it, so it stays out of the way.
   assert.deepEqual(await source.candidates({}, req('', 'leading')), [])
@@ -43,15 +49,27 @@ test('the composer completes a server name written inside a sentence', async () 
   assert.equal(all[0].description, 'npx pg-mcp', 'a stdio row reads its command')
   assert.equal(all[1].description, 'http://127.0.0.1:9000/mcp', 'an http row reads its url')
 
+  // The same names decorate `/name` tokens typed in the draft, and the settle
+  // has to reach the editor rather than wait for the next keystroke.
+  assert.deepEqual(source.lexicon(), ['pgsql_9_warehouse_pro', 'mogo_9'], 'the settled roll names them')
+  assert.deepEqual(settled, [['pgsql_9_warehouse_pro', 'mogo_9']], 'and reaches the render side')
+  stopWatching()
+
   assert.deepEqual(
     (await source.candidates({}, req('WAREHOUSE', 'inline'))).map(row => row.name),
     ['pgsql_9_warehouse_pro'],
     'the query is case-insensitive',
   )
 
-  // Picking inserts the name as plain text; the rest of the draft is not the
-  // source's to touch, so a sentence keeps everything around the name.
-  assert.deepEqual(source.onPick({ candidate: { name: 'mogo_9' } }), { text: '/mogo_9 ' })
+  // Picking lands an atomic chip: the composer shows the bare name, while the
+  // clipboard projection and the model serialization stay the `/name` text the
+  // plain insertion wrote. The rest of the draft is not the source's to touch,
+  // so a sentence keeps everything around the name.
+  assert.deepEqual(source.onPick({ candidate: { name: 'mogo_9' } }), {
+    insert: { source: 'mcp', ref: 'mogo_9', label: 'mogo_9', clipboardText: '/mogo_9' },
+  })
+  assert.equal(source.codec.clipboardText('mogo_9'), '/mogo_9')
+  assert.equal(await source.codec.serialize('mogo_9'), '/mogo_9')
 })
 
 test('a server that registers no command is never named', async () => {

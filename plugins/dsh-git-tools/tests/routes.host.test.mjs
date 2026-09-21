@@ -122,6 +122,19 @@ function mount(options = {}) {
           head = checkout[1]
           return { exitCode: 0, stdout: { text: '' }, stderr: { text: '' } }
         }
+        // Git for Windows runs hooks through its own sh.exe, which a sandboxed
+        // process cannot start: git then reports the shell's crash text.
+        if (options.shellStartupFails === true && spec.command.startsWith('git commit')) {
+          return {
+            exitCode: 1,
+            stdout: { text: '' },
+            stderr: {
+              text: '      0 [main] sh (26628) cygheap_user::init: NtSetInformationToken (TokenDefaultDacl), 0xC0000022\n'
+                + "    938 [main] sh (26628) D:\\Git\\Git\\usr\\bin\\sh.exe: *** fatal error - couldn't create signal pipe, Win32 error 5\n"
+                + 'Loaded modules:\n000210040000 msys-2.0.dll\n',
+            },
+          }
+        }
         return commandAnswer(spec.command, head, options.untracked ?? ['b.txt'])
       },
     },
@@ -234,6 +247,46 @@ test('a command route reaches git through the composed shell executor', async ()
   assert.equal(call.res.status, 200)
   assert.equal(call.json().branch, 'dev', 'the state comes back as it now is')
   assert.ok(commands.includes('git checkout dev'), `checked out through the shell: ${commands.join(', ')}`)
+})
+
+test('a commit whose hooks cannot start says what happened, not the shell’s stack trace', async () => {
+  const { handler } = mount({ shellStartupFails: true })
+  const call = exchange('POST', '/git-tools/api/commit', {
+    body: { sessionId: 'session-1', message: 'fix: it', stageAll: true },
+  })
+  await handler(call.req, call.res)
+
+  assert.equal(call.res.status, 400)
+  const error = call.json().error
+  assert.match(error, /could not run this repository's hooks/u, 'it names what failed')
+  assert.match(error, /permission mode/u, 'and what can be done about it')
+  assert.equal(error.includes('msys-2.0.dll'), false, 'the stack trace never reaches the page')
+  assert.equal(error.split('\n').length, 1, 'one line, not a dump')
+})
+
+test('the hooks bypass is asked for by hand, and only then reaches git', async () => {
+  const keeping = mount()
+  const plain = exchange('POST', '/git-tools/api/commit', { body: { sessionId: 'session-1', message: 'fix: it' } })
+  await keeping.handler(plain.req, plain.res)
+
+  assert.equal(plain.res.status, 200)
+  assert.equal(
+    keeping.commands.some(command => command.includes('--no-verify')),
+    false,
+    'by default the repository’s hooks still run',
+  )
+
+  const skipping = mount()
+  const bypassed = exchange('POST', '/git-tools/api/commit', {
+    body: { sessionId: 'session-1', message: 'fix: it', skipHooks: true },
+  })
+  await skipping.handler(bypassed.req, bypassed.res)
+
+  assert.equal(bypassed.res.status, 200)
+  assert.ok(
+    skipping.commands.some(command => command.startsWith('git commit --no-verify -F')),
+    `the bypass lands on the command line: ${skipping.commands.join(', ')}`,
+  )
 })
 
 test('the message route writes with the Session’s own model over the pending change', async () => {

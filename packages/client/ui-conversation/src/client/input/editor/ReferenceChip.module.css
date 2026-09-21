@@ -25,6 +25,19 @@
   white-space: nowrap;
 }
 
+/*
+ * The two kinds this fork draws apart. MCP keeps the amber a claimed command
+ * has always had; a subagent keeps the shared reference color. Every other
+ * source falls through to the plain chip.
+ */
+.sourceMcp {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.sourceSubagent {
+  color: var(--dsw-alias-state-business-primary);
+}
+
 .invalid {
   color: var(--dsw-alias-state-error-primary);
   text-decoration: line-through;

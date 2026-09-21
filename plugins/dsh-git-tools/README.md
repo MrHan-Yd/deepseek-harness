@@ -51,8 +51,12 @@ holds, and `创建并检出新分支…` (`git checkout -b <name>`).
 
 The commit row opens a dialog over the dimmed frame — the card stays crisp behind
 it — with the branch and the line counts, the message, the `包含未暂存的更改`
-switch beside the changed-file count, and three rows: 提交, 提交并推送, 推送.
-Escape, a click on the veil, or picking a branch closes it.
+switch beside the changed-file count, a `跳过 Git hooks（--no-verify）` switch, and
+three rows: 提交, 提交并推送, 推送. Escape, a click on the veil, or picking a
+branch closes it. The hooks switch is off by default and, once armed, states that
+it bypasses the repository's own commit checks: it exists for a repository whose
+hooks cannot start under the sandbox (see the limitations), and the decision to
+bypass them is the person's, never a fallback the panel takes on its own.
 
 推送 is grey when there is nothing to publish: the branch tracks an upstream and
 is level with it, which the Host reads from the same `status --porcelain=v2`
@@ -235,6 +239,14 @@ node --test "plugins/dsh-git-tools/tests/*.test.mjs"
   rather than read, so a working tree whose changes are dominated by one huge new
   file under-reports. Counting them through git instead would mean staging them
   into a scratch index, which writes to the repository.
+- **Hooks that are shell scripts cannot run under a confined session on Windows.**
+  Git for Windows runs every hook through its own `sh.exe`, and a sandboxed process
+  is given no signal pipe, so MSYS dies before the hook body runs and the commit
+  aborts. That is the deployment's sandbox rather than this plugin — the `pwsh`
+  tool cannot commit in such a repository either. The panel reports the cause in
+  one line instead of git's stack trace, and the commit dialog's `跳过 Git hooks
+  （--no-verify）` switch is the way through: it is off by default, and arming it
+  says it bypasses the repository's own checks.
 - **A Session that is still opening shows nothing for a moment.** The panel asks
   again once, 400 ms later; a Session that takes longer than that to get its Agent
   stays on its title until the next switch or command.

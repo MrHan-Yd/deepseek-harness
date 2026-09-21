@@ -17,7 +17,7 @@ import { detectTrigger } from '../core/detect.ts'
 import { MENU_CLOSED, menuReduce, seedGroups } from '../core/menu.ts'
 import type { MenuEvent, MenuState, TriggerHit } from '../core/contract.ts'
 import type {
-  ClientSessionContext, InputTriggerCandidate, InputTriggerCrumb, InputTriggerSource, PickAction,
+  ClientSessionContext, InputTriggerCandidate, InputTriggerCrumb, InputTriggerSource, LexiconOwner, PickAction,
   SubmitEnvelope, TriggerChar, TriggerGuard,
 } from '../types.ts'
 
@@ -86,6 +86,14 @@ export class InputTriggerController {
    */
   readonly lexicon: SnapshotStore<ReadonlyMap<TriggerChar, readonly string[]>> =
     createSnapshotStore<ReadonlyMap<TriggerChar, readonly string[]>>(new Map())
+
+  /**
+   * Owning source of each hot lexicon name, per trigger. Built in the same
+   * pass that publishes {@link InputTriggerController.lexicon}, so the two
+   * answers can never describe different rolls: a name that is matchable is
+   * always attributable, and the composer draws it by owner.
+   */
+  private readonly owners = new Map<TriggerChar, ReadonlyMap<string, LexiconOwner>>()
 
   /** The authoritative hit: single truth for span CAS material (menu snapshot never carries it alone). */
   private hit: TriggerHit | null = null
@@ -478,6 +486,7 @@ export class InputTriggerController {
   private refreshLexicon(): void {
     const projection = this.project()
     const rolls = new Map<TriggerChar, readonly string[]>()
+    const owners = new Map<TriggerChar, ReadonlyMap<string, LexiconOwner>>()
     for (const src of this.deps.roster.all()) {
       if (src.lexicon === undefined) continue
       let names: readonly string[] | undefined
@@ -493,8 +502,27 @@ export class InputTriggerController {
       if (names === undefined) continue
       const prev = rolls.get(src.trigger)
       rolls.set(src.trigger, prev === undefined ? names : [...prev, ...names])
+      const owned = new Map(owners.get(src.trigger) ?? [])
+      // Registration order settles a name two sources both claim, matching the
+      // order the concatenated roll lists it in.
+      for (const name of names) {
+        if (!owned.has(name)) owned.set(name, { source: src.name, insertable: src.codec !== undefined })
+      }
+      owners.set(src.trigger, owned)
     }
+    this.owners.clear()
+    for (const [trigger, owned] of owners) this.owners.set(trigger, owned)
     this.lexicon.set(rolls)
+  }
+
+  /**
+   * The source that published one hot lexicon name.
+   * @param trigger - trigger char the name was published under.
+   * @param name - matchable name without its trigger.
+   * @returns the owner and its chip capability, or undefined when the name is not hot.
+   */
+  lexiconOwner(trigger: TriggerChar, name: string): LexiconOwner | undefined {
+    return this.owners.get(trigger)?.get(name)
   }
 
   /** Wire one source's lexicon invalidation channel into refresh (hookless or roll-less sources never notify). */

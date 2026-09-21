@@ -834,6 +834,34 @@ describe('lexicon', () => {
     expect(rolls.has('@')).toBe(false)
   })
 
+  it('attributes each hot name to its publishing source, and its chip capability to that source’s codec', () => {
+    const owned: InputTriggerSource = {
+      ...lexSource('/', 'mcp', ['mogo_9']),
+      codec: { clipboardText: ref => `/${ref}`, serialize: () => Promise.resolve('') },
+    }
+    const { controller } = controllerBench([
+      owned,
+      lexSource('/', 'skill', ['commit-helper']),
+      lexSource('@', 'reference', ['worker-1']),
+    ])
+    expect(controller.lexiconOwner('/', 'mogo_9')).toEqual({ source: 'mcp', insertable: true })
+    // A chip is submittable only through its source's codec, so a codec-less
+    // source cannot back one and its names stay plain text.
+    expect(controller.lexiconOwner('/', 'commit-helper')).toEqual({ source: 'skill', insertable: false })
+    expect(controller.lexiconOwner('@', 'worker-1')).toEqual({ source: 'reference', insertable: false })
+    expect(controller.lexiconOwner('/', 'absent')).toBeUndefined()
+    expect(controller.lexiconOwner('#', 'mogo_9')).toBeUndefined()
+  })
+
+  it('a name two sources publish belongs to the first, matching the roll order', () => {
+    const later: InputTriggerSource = {
+      ...lexSource('/', 'mcp', ['shared']),
+      codec: { clipboardText: ref => `/${ref}`, serialize: () => Promise.resolve('') },
+    }
+    const { controller } = controllerBench([lexSource('/', 'skill', ['shared']), later])
+    expect(controller.lexiconOwner('/', 'shared')).toEqual({ source: 'skill', insertable: false })
+  })
+
   it('a source lexicon notification republishes the roll and refreshes an open menu', async () => {
     let roll: readonly string[] | undefined = ['old']
     let notify: (() => void) | undefined

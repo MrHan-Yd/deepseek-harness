@@ -13,7 +13,7 @@ import type { InputTriggerChar } from '../../contract/input.ts'
 import { registerReferenceActivation } from './reference-activation.ts'
 import { ReferenceChipNode, $createReferenceChipNode } from './chip-node.tsx'
 import { refreshClaimDecoration, registerClaimDecoration } from './claim-decor.ts'
-import { registerTextRefDecoration, rescanTextRefs, TextRefNode } from './text-ref.ts'
+import { registerTextRefDecoration, registerTextRefDeletion, rescanTextRefs, TextRefNode } from './text-ref.ts'
 import type { EditorProjection } from './projection.ts'
 import { $composerLayout, $projectComposer, detectOffsetOfClipboardOffset } from './projection.ts'
 import { $replaceDetectSpanWithNodes, $replaceDetectSpanWithText } from './span-map.ts'
@@ -74,6 +74,7 @@ export class DraftEditorRuntime {
       this.editor.registerUpdateListener(() => { this.deps.onUpdate() }),
       registerClaimDecoration(this.editor, () => this.deps.activeClaimToken()),
       registerTextRefDecoration(this.editor, () => this.deps.lexicon(), () => this.deps.activeClaimToken()),
+      registerTextRefDeletion(this.editor),
       () => { this.lexiconOff?.() },
     )
     return () => {

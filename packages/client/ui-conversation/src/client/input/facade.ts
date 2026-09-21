@@ -384,10 +384,46 @@ export class SessionInputShell implements SessionInput {
     // Leading-trigger contract: only whitespace may precede the span; the
     // whitespace prefix is dropped so the claimed watch (startsWith) holds.
     if (this.projection.detectText.slice(0, span.start).trim() !== '') return false
+    const chip = this.claimChipOf(claim)
+    if (chip !== undefined) {
+      // The chip's clipboard projection IS the claim token, so the machine's
+      // startsWith watch and the argument split read exactly the text the plain
+      // replacement would have written.
+      const tail = this.projection.detectText.slice(span.end, span.end + 1)
+      if (!this.draftEditor.insertReference({ start: 0, end: span.end }, chip, tail)) return false
+      this.dispatchRun(({ type: 'claim', claim }))
+      return true
+    }
     const applied = this.draftEditor.replaceText({ start: 0, end: span.end }, claim.token)
     if (!applied) return false
     this.dispatchRun(({ type: 'claim', claim }))
     return true
+  }
+
+  /**
+   * The chip one claim is drawn as, or undefined for the plain-text replacement.
+   *
+   * A claimed command whose name a trigger source published becomes an atomic
+   * chip labelled with the bare name: `/mcp-server` and `/subagent` then read as
+   * references — one node, no leading slash, deletable whole — while an ordinary
+   * command keeps the warn-styled text it had.
+   *
+   * Two conditions keep this safe. The owner must be `insertable` (a codec is
+   * what makes a chip submittable, and a codec-less chip would refuse the send),
+   * and the token's name must equal the catalog name, so a localized token
+   * spelling is never rewritten into a different one.
+   *
+   * @param claim - the claim being applied.
+   * @returns the chip insertion, or undefined to splice the claim token as text.
+   */
+  private claimChipOf(claim: CommandClaim): ReferenceInsert | undefined {
+    const written = claim.token.trimStart()
+    if (!written.startsWith('/')) return undefined
+    const name = written.slice(1).trimEnd()
+    if (name === '' || name !== claim.name) return undefined
+    const owner = this.deps.inputTriggers?.()?.lexiconOwner('/', name)
+    if (owner === undefined || !owner.insertable) return undefined
+    return { source: owner.source, ref: name, label: name, clipboardText: `/${name}` }
   }
 
   /**

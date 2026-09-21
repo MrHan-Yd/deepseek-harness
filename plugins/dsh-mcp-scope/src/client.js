@@ -89,6 +89,13 @@ window.__ModuleLoader__.load({
       fieldEnv: '环境变量（可选，每行 KEY=VALUE）',
       fieldUrl: 'URL',
       fieldHeaders: 'Headers（可选，每行 KEY: VALUE）',
+      fieldReadOnly: '只读（只放行查询类工具）',
+      readOnlyHint: '所有 MCP 服务器默认只读：工具名能证明是查询的才放行，写操作一律不暴露给模型。',
+      readOnlyBadge: '只读',
+      readOnlyOpen: '可写',
+      readOnlyOpenHint: '这个服务器放开了只读限制，写操作会暴露给模型。',
+      withheldTools: '已拦截 {count} 个非只读工具',
+      withheldHint: '只读策略按工具名判定：带写动词、或无法判定为查询的工具都不会暴露给模型。',
       transportStdio: 'stdio（本地命令）',
       transportHttp: 'streamable-http（远程地址）',
       save: '保存',
@@ -166,6 +173,13 @@ window.__ModuleLoader__.load({
       fieldEnv: 'Environment (optional, one KEY=VALUE per line)',
       fieldUrl: 'URL',
       fieldHeaders: 'Headers (optional, one KEY: VALUE per line)',
+      fieldReadOnly: 'Read-only (query-shaped tools only)',
+      readOnlyHint: 'Every MCP server is read-only by default: only a tool whose name proves a read is exposed, and writes never reach the model.',
+      readOnlyBadge: 'Read-only',
+      readOnlyOpen: 'Writable',
+      readOnlyOpenHint: 'This server waives the read-only policy, so its write tools reach the model.',
+      withheldTools: '{count} non-read tools withheld',
+      withheldHint: 'The policy judges by tool name: a write verb, or no provable read, keeps a tool away from the model.',
       transportStdio: 'stdio (local command)',
       transportHttp: 'streamable-http (remote URL)',
       save: 'Save',
@@ -608,6 +622,9 @@ window.__ModuleLoader__.load({
       const [env, setEnv] = useState(formatKeys(initial?.envKeys, '='))
       const [url, setUrl] = useState(initial?.url ?? '')
       const [headers, setHeaders] = useState(formatKeys(initial?.headerKeys, ':'))
+      // The Host defaults an absent field to read-only, so only the stored
+      // `false` reaches this control in the open position.
+      const [readOnly, setReadOnly] = useState(initial?.readOnly !== false)
       const [busy, setBusy] = useState(false)
       const [failure, setFailure] = useState('')
       const [mode, setMode] = useState('form')
@@ -640,6 +657,7 @@ window.__ModuleLoader__.load({
         }
         if ((initial.toolCallTimeoutMs ?? 30000) !== 30000) spec.toolCallTimeoutMs = initial.toolCallTimeoutMs
         if (initial.enabled === false) spec.enabled = false
+        if (initial.readOnly === false) spec.readOnly = false
         return JSON.stringify({ [initial.serverName]: spec }, undefined, 2)
       }
 
@@ -693,6 +711,7 @@ window.__ModuleLoader__.load({
             transport,
             toolCallTimeoutMs: Number(timeout) || 30000,
             enabled: initial?.enabled !== false,
+            readOnly,
           }
           if (transport === 'stdio') {
             server.command = command.trim()
@@ -877,6 +896,20 @@ window.__ModuleLoader__.load({
         modes,
         fields,
 
+        h('label', {
+          style: {
+            display: 'flex', alignItems: 'center', gap: 8, marginTop: 18,
+            fontSize: 12.5, opacity: 0.85, cursor: 'pointer',
+          },
+        },
+        h('input', {
+          type: 'checkbox',
+          checked: readOnly,
+          onChange: event => setReadOnly(event.target.checked),
+        }),
+        t('fieldReadOnly')),
+        h('div', { style: { fontSize: 12, opacity: 0.6, marginTop: 6 } }, t('readOnlyHint')),
+
         failure === ''
           ? null
           : h('div', { style: { color: '#e5484d', fontSize: 13, marginBottom: 12 } }, failure),
@@ -958,6 +991,10 @@ window.__ModuleLoader__.load({
       const isGlobal = server.scope === 'global'
       const scopeBadge = isGlobal ? t('global') : `${t('workspace')} · ${props.titleOf(server.scope)}`
       const tools = server.tools ?? []
+      // The read-only policy removes tools from `tools` without touching the
+      // mount, so its withholdings are what keeps a fully-withheld server from
+      // reading as one that never answered.
+      const withheld = server.withheld ?? []
       const health = server.health ?? undefined
       // Registered tools and a completed handshake are the only proof of a
       // connection this page holds: the official client connects in the
@@ -970,7 +1007,7 @@ window.__ModuleLoader__.load({
         ? { label: t('disabled') }
         : server.mounted !== true
           ? { label: t('mountFailed'), color: '#e5484d' }
-          : tools.length > 0 || health?.reachable === true || probe?.reachable === true
+          : tools.length > 0 || withheld.length > 0 || health?.reachable === true || probe?.reachable === true
             ? { label: t('connected'), color: '#30a46c' }
             : health?.reachable === false || probe?.reachable === false
               ? { label: t('unreachable'), color: '#e5484d' }
@@ -983,6 +1020,19 @@ window.__ModuleLoader__.load({
         h('span', { key: 'transport', style: chipStyle }, server.transport),
         h('span', { key: 'scope', style: chipStyle }, scopeBadge),
       ]
+      if (server.readOnly === false) {
+        chips.push(h('span', {
+          key: 'readonly',
+          style: { ...chipStyle, borderColor: '#f5a623', color: '#f5a623' },
+          title: t('readOnlyOpenHint'),
+        }, t('readOnlyOpen')))
+      } else {
+        chips.push(h('span', {
+          key: 'readonly',
+          style: chipStyle,
+          title: t('readOnlyHint'),
+        }, t('readOnlyBadge')))
+      }
       if (server.mounted && (server.sessions ?? 0) > 0) {
         chips.push(h('span', {
           key: 'sessions',
@@ -1042,7 +1092,15 @@ window.__ModuleLoader__.load({
             style: { fontSize: 12, color: '#e5484d', marginTop: 6 },
             title: t('commandConflictHint'),
           }, `/${server.commandName} ${t('commandConflict')}`)
-          : null),
+          : null,
+        // Which tools the policy took away, on the row: a person who cannot see
+        // a tool the server does expose needs the reason without a second page.
+        withheld.length === 0
+          ? null
+          : h('div', {
+            style: { fontSize: 12, opacity: 0.6, marginTop: 6 },
+            title: `${t('withheldHint')}\n${withheld.join('\n')}`,
+          }, t('withheldTools').replace('{count}', String(withheld.length)))),
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 } },
         ghostButton(
           h(WaveGlyph, { size: 13 }),
@@ -1353,6 +1411,8 @@ window.__ModuleLoader__.load({
       let entries
       /** In-flight read, shared so concurrent keystrokes issue one request. */
       let pending
+      /** Render-side subscribers of the name roll, one per live Session scope. */
+      const watchers = new Set()
       const load = (refresh) => {
         if (pending !== undefined) return pending
         if (entries !== undefined && refresh !== true) return Promise.resolve()
@@ -1366,6 +1426,16 @@ window.__ModuleLoader__.load({
                 && server.commandName !== null
                 && server.commandConflict !== true)
               .map(server => ({ name: server.commandName, description: targetOf(server) }))
+            // The draft decorates `/name` tokens the moment a name is on the
+            // roll, so a settle has to reach the editor rather than wait for the
+            // next keystroke.
+            for (const watcher of [...watchers]) {
+              try {
+                watcher()
+              } catch (error) {
+                console.error('[dsh-mcp-scope] lexicon listener failed:', error)
+              }
+            }
           },
           () => {
             // An unreadable list costs the menu its completions, never the
@@ -1398,8 +1468,36 @@ window.__ModuleLoader__.load({
         },
         onPick(pick) {
           // The server name, which is also the command name: the draft reaches
-          // the model, which reaches the server through the tool namespace.
-          return { text: `/${pick.candidate.name} ` }
+          // the model, which reaches the server through the tool namespace. The
+          // pick lands as an atomic chip whose clipboard projection is `/name`,
+          // so the draft, the copy, and the model text are what the plain
+          // insertion wrote — while the composer shows the bare name and
+          // deletes it whole.
+          return {
+            insert: {
+              source: 'mcp',
+              ref: pick.candidate.name,
+              label: pick.candidate.name,
+              clipboardText: `/${pick.candidate.name}`,
+            },
+          }
+        },
+        // A chip is submittable only through the codec of the source it names,
+        // so this source carries one.
+        codec: {
+          clipboardText: ref => `/${ref}`,
+          serialize: async ref => `/${ref}`,
+        },
+        // The render side scans the draft for `/name` and decorates an exact
+        // match, which is what gives a server named in a sentence the same chip
+        // a `/` reference has. Synchronous and fetch-free by contract: an unread
+        // roll answers undefined and stays plain text.
+        lexicon() {
+          return entries?.map(entry => entry.name)
+        },
+        subscribeLexicon(_session, listener) {
+          watchers.add(listener)
+          return () => { watchers.delete(listener) }
         },
         warm() { void load(false) },
       }

@@ -65,8 +65,8 @@ export type {
 } from './contract/slots.ts'
 export type {
   BeginCommandRequest, CommandClaim, ConsumeTokenRequest, DraftAttachmentId, InputActions,
-  InputState, InputTriggerChar, InsertReferenceRequest, InsertTextRequest, PickOutcome, SessionInput,
-  SessionInputResolver, SubmitAttachment, SubmitOutcome,
+  InputState, InputTriggerChar, InsertReferenceRequest, InsertTextRequest, LexiconOwner, PickOutcome,
+  SessionInput, SessionInputResolver, SubmitAttachment, SubmitOutcome,
 } from './contract/input.ts'
 export type { ArbitrateKey, ArbitrateOutcome, ReferenceInsert, TokenSpan } from './contract/draft-editor.ts'
 export type { ComposerBlock, ComposerBlocks } from './contract/composer-blocks.ts'

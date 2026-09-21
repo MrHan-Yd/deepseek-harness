@@ -12,6 +12,12 @@
  * context, which `agent.ctx` is; a context-global restriction would mask every
  * agent, so the mask is always applied per agent and lifted on disposal.
  *
+ * The same mask carries the read-only policy. An MCP server is external code
+ * whose tool set is unknown at mount time, so unless its record waives the
+ * policy every `mcp__<server>__<tool>` name that does not prove a read is
+ * denied — including names owned by a server mounted outside this store. See
+ * `./readonly.js` for what proves a read.
+ *
  * The Settings page talks to this half over a same-origin HTTP API rather than
  * a typed Remote: the plugin ships no generated Remote assembly, and the route
  * handler is small enough to audit in place. Every request must carry the
@@ -32,6 +38,7 @@ import { dirname, join, resolve } from 'node:path'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { DEFAULT_PROBE_TIMEOUT_MS, diagnose, probeServer, sanitizeText } from './probe.js'
+import { isReadOnlyTool, mcpToolIdentity } from './readonly.js'
 import { GLOBAL_SCOPE, canonical, inScope, normalizeScope } from './scope.js'
 
 export const name = 'mcp-scope'
@@ -121,6 +128,10 @@ function validateServer(input) {
     transport,
     scope: normalizeScope(input.scope),
     enabled: input.enabled !== false,
+    // The read-only policy is the default, including for a record stored
+    // before the field existed: an absent value is not a decision to widen
+    // access. Only an explicit `false` waives it.
+    readOnly: input.readOnly !== false,
     toolCallTimeoutMs,
   }
   if (transport === 'stdio') {
@@ -513,12 +524,12 @@ class ScopeRuntime {
   }
 
   /**
-   * Apply this agent's scope mask.
+   * Apply this agent's scope mask and read-only mask.
    * @param agent - the agent to mask.
    */
   #mask(agent) {
     const record = this.agents.get(agent.id)
-    const deny = []
+    const deny = new Set(this.policyDeniedNames())
     const visible = []
     const visibleRecords = []
     try {
@@ -531,18 +542,19 @@ class ScopeRuntime {
           visibleRecords.push(server)
           continue
         }
-        deny.push(...this.toolNames(server.serverName))
+        for (const name of this.toolNames(server.serverName)) deny.add(name)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.ctx.logger?.warn?.(`mcp-scope: agent ${agent.id} scope resolution failed: ${message}`)
       return
     }
+    const denied = [...deny]
     if (record !== undefined) {
       record.visible = visible
-      record.denied = deny
+      record.denied = denied
     }
-    this.#applyMask(agent, deny)
+    this.#applyMask(agent, denied)
     // Command registration is driven by the visible set, which changes without
     // the deny list changing (a newly mounted in-scope server adds no denial),
     // so it runs on every sweep rather than behind the mask's own early return.
@@ -675,11 +687,14 @@ class ScopeRuntime {
     }
     const task = String(invocation.rawInput ?? '').trim()
     if (task === '') return { kind: 'error', text: `用法：/${serverName} <任务>` }
-    const tools = this.toolNames(serverName)
+    const tools = this.visibleToolNames(serverName)
     if (tools.length === 0) {
+      const withheld = this.withheldToolNames(serverName).length
       return {
         kind: 'error',
-        text: `MCP 服务器「${serverName}」还没有注册任何工具，可能仍在连接或启动失败；先在这个页面上「探测」它。`,
+        text: withheld === 0
+          ? `MCP 服务器「${serverName}」还没有注册任何工具，可能仍在连接或启动失败；先在这个页面上「探测」它。`
+          : `MCP 服务器「${serverName}」的 ${withheld} 个工具都被只读策略拦下了，没有可用的查询工具。`,
       }
     }
     const subagents = this.ctx.get('subagents')
@@ -722,6 +737,61 @@ class ScopeRuntime {
       if (typeof toolName === 'string' && toolName.startsWith(prefix)) names.push(toolName)
     }
     return names
+  }
+
+  /**
+   * Whether one server's record waives the read-only policy.
+   *
+   * A server mounted outside this store has no record and therefore no waiver:
+   * the policy is the default for every MCP tool, not only for the ones this
+   * plugin mounts.
+   *
+   * @param serverName - the server whose record to read.
+   * @returns true when the stored record explicitly opts out.
+   */
+  #waivesReadOnly(serverName) {
+    return this.serverByName(serverName)?.readOnly === false
+  }
+
+  /**
+   * Every registered MCP tool the read-only policy withholds.
+   *
+   * Swept over the whole `mcp__` namespace rather than over the mounted
+   * servers, so a server mounted by the composition — outside this store and
+   * outside every scope mask — is held to the same policy.
+   *
+   * @returns the withheld model-facing tool names.
+   */
+  policyDeniedNames() {
+    const denied = []
+    for (const schema of this.ctx.tools.schemas()) {
+      const toolName = schema?.name
+      if (typeof toolName !== 'string') continue
+      const identity = mcpToolIdentity(toolName)
+      if (identity === null || this.#waivesReadOnly(identity.serverName)) continue
+      if (!isReadOnlyTool(toolName)) denied.push(toolName)
+    }
+    return denied
+  }
+
+  /**
+   * The tools of one server a session may actually call.
+   * @param serverName - the server whose tools to list.
+   * @returns the registered names the read-only policy admits.
+   */
+  visibleToolNames(serverName) {
+    const names = this.toolNames(serverName)
+    return this.#waivesReadOnly(serverName) ? names : names.filter(name => isReadOnlyTool(name))
+  }
+
+  /**
+   * The tools of one server the read-only policy withholds.
+   * @param serverName - the server whose tools to list.
+   * @returns the registered names the policy denies.
+   */
+  withheldToolNames(serverName) {
+    if (this.#waivesReadOnly(serverName)) return []
+    return this.toolNames(serverName).filter(name => !isReadOnlyTool(name))
   }
 
   /**
@@ -955,8 +1025,12 @@ function mcpCommand(runtime) {
         if (servers.length === 0) {
           return { kind: 'success', text: '本会话没有可见的 MCP 服务器。用「设置 → MCP 服务器」添加。' }
         }
-        const lines = servers.map(server =>
-          `• ${server.serverName} — ${scopeLabel(server)}，${runtime.toolNames(server.serverName).length} 个工具`)
+        const lines = servers.map(server => {
+          const visible = runtime.visibleToolNames(server.serverName).length
+          const withheld = runtime.withheldToolNames(server.serverName).length
+          const policy = withheld === 0 ? '' : `，另有 ${withheld} 个非只读工具已被拦截`
+          return `• ${server.serverName} — ${scopeLabel(server)}，${visible} 个可用工具${policy}`
+        })
         return { kind: 'success', text: `本会话可见的 MCP 服务器（${servers.length}）：\n${lines.join('\n')}` }
       }
       if (subcommand === 'tools') {
@@ -964,12 +1038,22 @@ function mcpCommand(runtime) {
         if (server === undefined) {
           return { kind: 'error', text: `本会话没有可见的服务器「${parts[1] ?? ''}」。先运行 /mcp 看列表。` }
         }
-        const names = runtime.toolNames(server.serverName)
+        const names = runtime.visibleToolNames(server.serverName)
+        const withheld = runtime.withheldToolNames(server.serverName)
+        const policy = withheld.length === 0
+          ? ''
+          : `\n只读策略拦下了 ${withheld.length} 个工具：\n${withheld.map(name => `• ${name}`).join('\n')}`
+        if (names.length === 0) {
+          return {
+            kind: 'success',
+            text: runtime.toolNames(server.serverName).length === 0
+              ? `「${server.serverName}」当前没有注册任何工具。`
+              : `「${server.serverName}」的 ${withheld.length} 个工具都被只读策略拦下了。${policy}`,
+          }
+        }
         return {
           kind: 'success',
-          text: names.length === 0
-            ? `「${server.serverName}」当前没有注册任何工具。`
-            : `「${server.serverName}」的 ${names.length} 个工具：\n${names.map(name => `• ${name}`).join('\n')}`,
+          text: `「${server.serverName}」可用的 ${names.length} 个工具：\n${names.map(name => `• ${name}`).join('\n')}${policy}`,
         }
       }
       if (subcommand === 'health') {
@@ -1117,7 +1201,12 @@ export async function apply(ctx, config) {
                 // never arrived: the only reachability evidence the page has.
                 health: runtime.healthOf(server.serverName),
                 sessions: counts.get(server.serverName) ?? 0,
-                tools: runtime.toolNames(server.serverName),
+                // `tools` is what a session may call; `withheld` is what the
+                // read-only policy took away, so a server whose every tool was
+                // withheld is distinguishable from one that never answered.
+                tools: runtime.visibleToolNames(server.serverName),
+                withheld: runtime.withheldToolNames(server.serverName),
+                readOnly: server.readOnly !== false,
                 // The command name is the server name, and the registry accepts
                 // lowercase only; a collision means the command would shadow an
                 // existing one for every Session in scope.
@@ -1215,6 +1304,12 @@ async function callTool(ctx, runtime, body) {
   if (server === undefined) throw new Error(`unknown MCP server "${serverName}"`)
   if (!runtime.toolNames(serverName).includes(toolName)) {
     throw new Error(`tool "${toolName}" is not registered by "${serverName}" — the server may be down or still connecting`)
+  }
+  // The page's trial path reaches the registry with the caller's own agent, so
+  // the mask already refuses this — but as an opaque scope error. Naming the
+  // policy here is what tells a person why a tool they can see is unusable.
+  if (runtime.withheldToolNames(serverName).includes(toolName)) {
+    throw new Error(`tool "${toolName}" is withheld by the read-only policy: "${serverName}" may only call tools whose name proves a read`)
   }
   let args
   try {

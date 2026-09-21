@@ -178,6 +178,8 @@ export function serverRow(overrides) {
     commandConflict: false,
     sessions: 0,
     tools: [],
+    withheld: [],
+    readOnly: true,
     health: null,
     ...overrides,
   }

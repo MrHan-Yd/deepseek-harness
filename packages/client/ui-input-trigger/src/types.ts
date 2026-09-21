@@ -16,7 +16,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 export type {
   ArbitrateKey, ArbitrateOutcome, BeginCommandRequest, CommandClaim, ConsumeTokenRequest,
-  InputTriggerChar, InsertReferenceRequest, InsertTextRequest, PickOutcome, ReferenceInsert,
+  InputTriggerChar, InsertReferenceRequest, InsertTextRequest, LexiconOwner, PickOutcome, ReferenceInsert,
   SubmitAttachment, SubmitOutcome, TokenSpan,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 

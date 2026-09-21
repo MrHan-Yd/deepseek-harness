@@ -65,7 +65,7 @@ Every dropdown — the toolbar's scope selector and the editor's scope and model
 
 ## Tests
 
-`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/select.client.test.mjs` boots the browser half in jsdom and drives the editor's dropdowns: no native select may return, the scope rows follow the workspace registry, and the model list keeps its provider headings and saves the route it selected. It also drives a row's delete button, which arms on the first click and removes on the second, and the plugin's own `/` source — which answers inside a draft and never at its head, and settles a pick by inserting the catalog name as text.
+`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/select.client.test.mjs` boots the browser half in jsdom and drives the editor's dropdowns: no native select may return, the scope rows follow the workspace registry, and the model list keeps its provider headings and saves the route it selected. It also drives a row's delete button, which arms on the first click and removes on the second, and the plugin's own `/` source — which answers inside a draft and never at its head, and settles a pick as the atomic chip whose clipboard projection is the `/name` text.
 
 ```sh
 node --test "plugins/dsh-agent-scope/tests/*.test.mjs"
@@ -83,14 +83,16 @@ The command is registered through a child of each agent's own context, which is 
 
 A definition's command declares an input hint, so it needs a task: picking the row from the `/` menu **claims** the command and leaves `/name ` in the composer for the task (its placeholder says so), and only the next Enter dispatches it. Typing the whole line at once — menu closed by the space — dispatches on a single Enter.
 
-A `/name` written **inside a sentence** is a different intent, and the host command source does not offer one: an argument-taking command claims the whole line, so the message it submits is the command alone and anything typed before the name would be discarded. The plugin therefore registers its own `/` source — the menu group 子智能体 — which answers only away from the head of the draft, lists the same enabled definitions, and settles a pick by inserting the catalog name as plain text. This keeps
+A `/name` written **inside a sentence** is a different intent, and the host command source does not offer one: an argument-taking command claims the whole line, so the message it submits is the command alone and anything typed before the name would be discarded. The plugin therefore registers its own `/` source — the menu group 子智能体 — which answers only away from the head of the draft, lists the same enabled definitions, and settles a pick as an **atomic chip**: the composer shows the bare name, while the chip's clipboard projection stays `/name`. This keeps
 
 ```
 需求：xxx。先让 /system-architect 设计架构，它出结果后再让 /ui-designer 设计 UI，
 最后交给 /code-reviewer 检查。
 ```
 
-as one message: the names reach the model as text, and the model delegates through the tools of the same names. Nothing is claimed and no command runs from the composer. At the head of the draft the source contributes nothing, so a leading `/name` behaves exactly as described above.
+as one message: the names reach the model as text, and the model delegates through the tools of the same names. Nothing is claimed and no command runs from the composer. At the head of the draft the source contributes nothing, so a leading `/name` is claimed and run by the host command source exactly as described above — drawn as the same chip, because the name this source publishes is the name the claim resolves to.
+
+The source also publishes those names as its **lexicon** — the render side's roll of plain-text references — so a `/name` typed in the draft picks up the composer's shared reference treatment as soon as the definition list settles, and stays plain text until it does. The roll is synchronous and fetches nothing: an unread list answers nothing rather than starting a read from the render path. Because the source also publishes a **codec**, every name it owns can be drawn as a chip — one node showing the bare name, carrying its own color rather than the MCP one, deleted whole by one Backspace — while a hand-typed token waits for the roll and the claim arrives as text.
 
 In a session that has not produced anything yet, a command still executes host-side, but the Web client has no materialized conversation to render its result into, so only a transient notice shows. Sending the task with the command avoids that: the child it starts gives the session something to render, and the settlement notice then arrives as a normal message.
 

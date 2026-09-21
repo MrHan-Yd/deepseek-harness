@@ -370,6 +370,8 @@ test('the commit box carries the message, the staging switch, and the three acti
   assert.match(page.container.children[0].style.animation, /dsh-git-tools-veil/, 'over a veil that fades in')
   assert.equal(dialog.querySelector('textarea').getAttribute('placeholder'), '提交信息（留空将自动生成）')
   assert.ok(text.includes('包含未暂存的更改') && text.includes('27 个文件'), 'the staging switch sits beside the file count')
+  assert.ok(text.includes('跳过 Git hooks（--no-verify）'), 'and the way to commit a repository whose hooks cannot start')
+  assert.equal(text.includes('将绕过仓库自己的提交检查。'), false, 'which says nothing while it is off')
   assert.ok(text.includes('提交') && text.includes('提交并推送') && text.includes('推送'), 'all three actions are rows')
   assert.ok(text.includes('+2,752') && text.includes('-380'), 'with the line counts grouped')
   assert.ok(page.byLabel('生成提交信息'), 'and the box offers to have a message written')
@@ -379,7 +381,33 @@ test('the commit box carries the message, the staging switch, and the three acti
   await page.type(dialog.querySelector('textarea'), 'fix the panel')
   await page.flush(() => { page.byLabel('提交').click() })
   const call = page.calls.find(entry => entry.url.endsWith('/commit'))
-  assert.deepEqual(call.body, { sessionId: 'session-1', message: 'fix the panel', stageAll: true })
+  assert.deepEqual(call.body, { sessionId: 'session-1', message: 'fix the panel', stageAll: true, skipHooks: false })
+
+  await page.close()
+})
+
+test('the hooks bypass is armed by hand, says what it costs, and rides the commit', async () => {
+  const page = await openPanel({
+    cwd: 'D:\\ws\\repo', repo: true, branch: 'master', branches: ['master'], changedFiles: 3, insertions: 9, deletions: 1,
+  })
+  await page.flush(() => { page.pill().click() })
+  await page.flush(() => { page.byLabel('提交或推送').click() })
+
+  const dialog = page.container.querySelector('[role="dialog"]')
+  const box = [...dialog.querySelectorAll('input[type="checkbox"]')]
+    .find(candidate => candidate.parentElement.textContent.includes('跳过 Git hooks'))
+  assert.ok(box, 'the box offers it')
+  assert.equal(box.checked, false, 'and it is off by default, so the repository’s hooks still run')
+
+  await page.flush(() => { box.click() })
+  assert.equal(box.checked, true)
+  assert.ok(page.container.textContent.includes('将绕过仓库自己的提交检查。'), 'arming it says what it costs')
+
+  await page.type(dialog.querySelector('textarea'), 'fix: it')
+  await page.flush(() => { page.byLabel('提交').click() })
+  const call = page.calls.find(entry => entry.url.endsWith('/commit'))
+  assert.equal(call.body.skipHooks, true, 'and only an armed box reaches git')
+  assert.equal(call.body.stageAll, true)
 
   await page.close()
 })
@@ -420,7 +448,7 @@ test('committing an empty box writes the message first, then commits with it', a
   assert.deepEqual(order, ['message', 'commit'], 'the message is written before it is committed')
   const committed = page.calls.find(entry => entry.url.endsWith('/commit'))
   assert.deepEqual(committed.body, {
-    sessionId: 'session-1', message: 'fix: keep the panel on the session', stageAll: true,
+    sessionId: 'session-1', message: 'fix: keep the panel on the session', stageAll: true, skipHooks: false,
   })
 
   await page.close()

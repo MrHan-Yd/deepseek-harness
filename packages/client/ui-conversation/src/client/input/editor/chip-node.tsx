@@ -188,6 +188,7 @@ export class ReferenceChipNode extends DecoratorNode<JSX.Element> {
     return (
       <ReferenceChip
         label={this.__label}
+        source={this.__source}
         appearance={this.__appearance}
         invalid={this.__invalid}
       />

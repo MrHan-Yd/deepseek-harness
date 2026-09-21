@@ -327,6 +327,12 @@ test('the composer completes a sub-agent name written inside a sentence', async 
 
   const req = (query, position) => ({ query, position, drilled: false, signal: new AbortController().signal })
 
+  // The roll the draft decorates from is synchronous and fetches nothing: before
+  // the list is read there is nothing to decorate, and a token stays plain text.
+  assert.equal(source.lexicon(), undefined, 'an unread roll decorates nothing')
+  const settled = []
+  const stopWatching = source.subscribeLexicon({}, () => settled.push(source.lexicon()))
+
   // The head of the draft belongs to the host command source, which runs the
   // definition; this source would only name it, so it stays out of the way.
   assert.deepEqual(await source.candidates({}, req('', 'leading')), [])
@@ -336,13 +342,30 @@ test('the composer completes a sub-agent name written inside a sentence', async 
   assert.deepEqual(all.map(row => row.name), ['code-reviewer', 'system-architect'])
   assert.equal(all[0].description, 'A demanding reviewer.')
 
+  // The same names decorate `/name` tokens typed in the draft, and the settle
+  // has to reach the editor rather than wait for the next keystroke.
+  assert.deepEqual(source.lexicon(), ['code-reviewer', 'system-architect'], 'the settled roll names them')
+  assert.deepEqual(settled, [['code-reviewer', 'system-architect']], 'and reaches the render side')
+  stopWatching()
+
   const filtered = await source.candidates({}, req('CODE', 'inline'))
   assert.deepEqual(filtered.map(row => row.name), ['code-reviewer'], 'the query is case-insensitive')
   assert.deepEqual(await source.candidates({}, req('retired', 'inline')), [], 'a disabled definition is not offered')
 
-  // Picking inserts the catalog name as plain text; the rest of the draft is
-  // not the source's to touch, so a sentence keeps everything around the name.
-  assert.deepEqual(source.onPick({ candidate: { name: 'code-reviewer' } }), { text: '/code-reviewer ' })
+  // Picking lands an atomic chip: the composer shows the bare name, while the
+  // clipboard projection and the model serialization stay the `/name` text the
+  // plain insertion wrote. The rest of the draft is not the source's to touch,
+  // so a sentence keeps everything around the name.
+  assert.deepEqual(source.onPick({ candidate: { name: 'code-reviewer' } }), {
+    insert: {
+      source: 'subagent',
+      ref: 'code-reviewer',
+      label: 'code-reviewer',
+      clipboardText: '/code-reviewer',
+    },
+  })
+  assert.equal(source.codec.clipboardText('code-reviewer'), '/code-reviewer')
+  assert.equal(await source.codec.serialize('code-reviewer'), '/code-reviewer')
 })
 
 test('an unreadable definition list leaves the menu empty, not the composer broken', async () => {

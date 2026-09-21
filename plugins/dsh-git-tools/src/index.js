@@ -291,18 +291,26 @@ async function readState(ctx, cwd) {
  * The message goes to a file and reaches git as `-F <file>`: a message is free
  * text, and this way no part of it is ever parsed as command syntax.
  *
+ * `skipHooks` adds `--no-verify`, the only way to commit a repository whose hooks
+ * cannot start — Git for Windows runs every hook through its own `sh.exe`, which
+ * a confined sandbox on that platform will not let start. The page asks for it
+ * explicitly and says what it costs, because the hooks are the repository's own
+ * gates and this is the caller's decision, not a fallback.
+ *
  * @param ctx - plugin context carrying `shell`.
  * @param cwd - the workspace directory.
  * @param message - the commit message.
  * @param stageAll - whether to stage every change first.
+ * @param skipHooks - whether to commit with `--no-verify`.
  * @returns the commit command's outcome.
  */
-async function commit(ctx, cwd, message, stageAll) {
+async function commit(ctx, cwd, message, stageAll, skipHooks) {
   if (stageAll) assertOk(await runGit(ctx, cwd, ['add', '-A']), 'add')
   const file = join(tmpdir(), `dsh-git-tools-${process.pid}-${randomBytes(6).toString('hex')}`)
   writeFileSync(file, message, { encoding: 'utf8', mode: 0o600 })
   try {
-    return assertOk(await runGit(ctx, cwd, ['commit', '-F', quoteArg(file)]), 'commit')
+    const args = ['commit', ...skipHooks ? ['--no-verify'] : [], '-F', quoteArg(file)]
+    return assertOk(await runGit(ctx, cwd, args), 'commit')
   } finally {
     rmSync(file, { force: true })
   }
@@ -652,7 +660,7 @@ export function apply(ctx) {
             const body = await readJson(req)
             const cwd = requiredCwd(ctx, body)
             const message = requireMessage(body?.message)
-            const result = await commit(ctx, cwd, message, body?.stageAll === true)
+            const result = await commit(ctx, cwd, message, body?.stageAll === true, body?.skipHooks === true)
             sendJson(res, 200, { ok: true, stdout: result.stdout, stderr: result.stderr, ...(await readState(ctx, cwd)) })
             return
           }

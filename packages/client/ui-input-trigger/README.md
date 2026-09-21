@@ -33,6 +33,8 @@ The composer surface keeps focus while the menu is open: rows pick on mousedown,
 
 A source may implement `openReference(session, reference)` to open a draft reference without submitting it. Acceptance may precede asynchronous catalog loading. Chips route by source name; editable tokens route through the current source lexicon. Returning `false`, a missing source, or a disposed controller leaves the editor gesture unchanged.
 
+A source that publishes a `lexicon` roll is also its names' **owner**: the controller attributes every hot name to the source that listed it (first registration wins, matching the roll's own order) and reports along with it whether that source carries a `codec` — `lexiconOwner(trigger, name)`. The consuming surface uses the answer to draw a name by kind, and a name whose owner has no codec cannot become a chip because the submit path serializes occurrences through the owner's codec alone.
+
 -----
 
 <a id="understand-the-implementation"></a>

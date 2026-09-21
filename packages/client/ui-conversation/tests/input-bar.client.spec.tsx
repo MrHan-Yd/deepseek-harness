@@ -28,7 +28,7 @@ import { $replaceDetectSpanWithText, $selectDetectSpan } from '../src/client/inp
 import type {
   ComposerAttachment, ComposerAttachmentsOwnerProps, DraftFileUploads,
 } from '../src/client/contract/slots.ts'
-import type { DraftAttachmentId } from '../src/client/contract/input.ts'
+import type { DraftAttachmentId, LexiconOwner } from '../src/client/contract/input.ts'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import { en, zh } from '../src/client/locales.ts'
@@ -62,6 +62,8 @@ interface BenchOptions {
   permissionEntry?: React.ReactNode
   /** Hot text-ref lexicon (injects a minimal slash stub exposing only lexicon()). */
   lexicon?: ReadonlyMap<'/' | '@', readonly string[]>
+  /** Owner of each hot lexicon name, as the controller attributes it. */
+  lexiconOwners?: ReadonlyMap<string, LexiconOwner>
   /** The `imageLimits` projection value (absent = no attachment service). */
   imageLimits?: {
     maxImageBytes: number
@@ -136,12 +138,17 @@ function bench(over?: BenchOptions) {
     }),
     ...(over?.steerQueue !== undefined ? { steerQueue: over.steerQueue } : {}),
     // Lexicon-only stub: adjudication untouched (undefined slash methods are
-    // never reached — these benches drive plain-draft flows only).
-    ...(lex !== undefined
+    // never reached — these benches drive plain-draft flows only). The owner
+    // lookup is the one claim-path read these benches need.
+    ...(lex !== undefined || over?.lexiconOwners !== undefined
       ? {
         inputTriggers: (() => ({
           track: () => {},
-          lexicon: { getSnapshot: () => lex, subscribe: () => () => {} },
+          lexicon: {
+            getSnapshot: () => lex ?? new Map<'/' | '@', readonly string[]>(),
+            subscribe: () => () => {},
+          },
+          lexiconOwner: (_trigger: string, name: string) => over?.lexiconOwners?.get(name),
         })) as unknown as NonNullable<ShellDeps['inputTriggers']>,
       }
       : {}),
@@ -1301,6 +1308,66 @@ describe('machine pending lock', () => {
     const textarea = view.container.querySelector<HTMLDivElement>('[data-composer-input]')!
     expect(editableOf(textarea)).toBe(false)
     expect(view.container.querySelector<HTMLButtonElement>('button[aria-label="发送消息"]')!.disabled).toBe(true)
+  })
+})
+
+describe('claimed command chips', () => {
+  /** A hot `/` name whose source carries a codec, i.e. one that can back a chip. */
+  const hot = new Map<'/' | '@', readonly string[]>([['/', ['mogo_9']]])
+  const owners = new Map<string, LexiconOwner>([['mogo_9', { source: 'mcp', insertable: true }]])
+
+  /** Seed the token and apply one claim over the whole draft. */
+  function claim(
+    over: BenchOptions,
+    fields: { name: string; token: string },
+  ): ReturnType<typeof bench> {
+    const benched = bench(over)
+    act(() => {
+      benched.shell.setDraft(fields.token)
+      benched.shell.beginCommand(
+        { ...fields, submit: () => Promise.resolve({ kind: 'success' as const }) },
+        { start: 0, end: fields.token.length, draftRev: benched.shell.snapshot.draftRev },
+      )
+    })
+    return benched
+  }
+
+  it('a name its source can back lands as an atomic chip showing the bare name', () => {
+    const { view, shell } = claim(
+      { lexicon: hot, lexiconOwners: owners },
+      { name: 'mogo_9', token: '/mogo_9 ' },
+    )
+    const chip = view.container.querySelector('[data-composer-chip="mcp"]')
+    expect(chip?.textContent).toBe('mogo_9') // the name, with no leading slash
+    expect(chip?.getAttribute('contenteditable')).toBe('false')
+    expect(chip?.getAttribute('data-source')).toBe('mcp')
+    // The draft IS the clipboard projection, so the command the Host reads and
+    // the arguments typed after it are unchanged.
+    expect(shell.snapshot.draft).toBe('/mogo_9 ')
+    expect(shell.snapshot.occurrences[0]).toMatchObject({ source: 'mcp', offset: 0, length: 7 })
+    expect(shell.snapshot.phase).toBe('claimed')
+  })
+
+  it('anything but an owned, identically spelled name keeps the plain-text claim', () => {
+    // Not hot at all, and hot but codec-less: a chip whose source cannot
+    // serialize would refuse the send, so both stay text.
+    const cases: readonly [BenchOptions, { name: string; token: string }][] = [
+      [{ lexicon: hot, lexiconOwners: new Map() }, { name: 'mogo_9', token: '/mogo_9 ' }],
+      [
+        { lexicon: hot, lexiconOwners: new Map([['mogo_9', { source: 'skill', insertable: false }]]) },
+        { name: 'mogo_9', token: '/mogo_9 ' },
+      ],
+      // A localized token spelling is never rewritten into another name.
+      [{ lexicon: hot, lexiconOwners: owners }, { name: 'goal', token: '/目标 ' }],
+      // A token carrying no name.
+      [{ lexicon: hot, lexiconOwners: owners }, { name: '', token: '/ ' }],
+    ]
+    for (const [over, fields] of cases) {
+      const { view, shell } = claim(over, fields)
+      expect(view.container.querySelector('[data-composer-chip]')).toBeNull()
+      expect(shell.snapshot.draft).toBe(fields.token)
+      expect(shell.snapshot.phase).toBe('claimed')
+    }
   })
 })
 

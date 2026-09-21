@@ -97,6 +97,8 @@ window.__ModuleLoader__.load({
       languageZh: '中文',
       languageEn: 'English',
       stageAll: '包含未暂存的更改',
+      skipHooks: '跳过 Git hooks（--no-verify）',
+      skipHooksWarn: '将绕过仓库自己的提交检查。',
       files: '个文件',
       clean: '没有未提交的更改',
       uncommitted: '未提交的更改',
@@ -131,6 +133,8 @@ window.__ModuleLoader__.load({
       languageZh: '中文',
       languageEn: 'English',
       stageAll: 'Include unstaged changes',
+      skipHooks: 'Skip Git hooks (--no-verify)',
+      skipHooksWarn: 'This bypasses the repository’s own commit checks.',
       files: 'files',
       clean: 'No uncommitted changes',
       uncommitted: 'Uncommitted changes',
@@ -251,6 +255,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(undefined)
       const [message, setMessage] = useState('')
       const [stageAll, setStageAll] = useState(true)
+      const [skipHooks, setSkipHooks] = useState(false)
       const [busy, setBusy] = useState(false)
       const [writing, setWriting] = useState(false)
       const [note, setNote] = useState('')
@@ -397,7 +402,7 @@ window.__ModuleLoader__.load({
 
       const commit = (push) => run(async () => {
         const text = await messageFor()
-        const next = await request('POST', '/commit', { sessionId, message: text, stageAll })
+        const next = await request('POST', '/commit', { sessionId, message: text, stageAll, skipHooks })
         setMessage('')
         return push ? await request('POST', '/push', { sessionId }) : next
       })
@@ -593,6 +598,22 @@ window.__ModuleLoader__.load({
           t('stageAll')),
         h('div', { style: { flex: 1 } }),
         h('span', { style: { opacity: 0.6 } }, changed === 0 ? t('clean') : `${changed} ${t('files')}`)),
+
+      // The one way to commit a repository whose hooks cannot start: Git for
+      // Windows runs them through its own `sh.exe`, which a confined sandbox
+      // refuses. It is asked for by hand, and says what it costs, because the
+      // hooks are the repository's own gates.
+      h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' } },
+        h('input', {
+          type: 'checkbox',
+          checked: skipHooks,
+          onChange: event => setSkipHooks(event.target.checked),
+        }),
+        t('skipHooks')),
+      skipHooks
+        ? h('div', { style: { fontSize: 11, marginTop: -4, color: 'var(--dsw-alias-state-error-primary)' } },
+          t('skipHooksWarn'))
+        : null,
 
       note === '' ? null : h('div', {
         style: { whiteSpace: 'pre-wrap', fontSize: 11.5, color: 'var(--dsw-alias-state-error-primary)' },

@@ -20,15 +20,29 @@ Every enabled server is mounted **once** on the root context through the officia
 
 Tools are therefore hidden from the model, not merely discouraged. Servers stay mounted; only visibility is scoped.
 
+## Read-only policy
+
+An MCP server is external code: what it publishes is unknown when it is added, its credentials are not this plugin's to constrain, and a pinned server name can answer with a different tool set tomorrow. Every `mcp__<server>__<tool>` name is therefore read-only **unless the name itself proves a read**, and a name that proves nothing is withheld. The rule is `src/readonly.js`: a tool is admitted only when its name carries a read verb (`get`, `list`, `find`, `count`, `query`, `aggregate`, `describe`, `explain`, `stats`, `schema`, `search`, `exists`, `scan`, `keys`, …) and carries no write verb (`insert`, `update`, `delete`, `drop`, `create`, `rename`, `set`, `write`, `execute`, `run`, `apply`, `flush`, `grant`, …). A compound name loses to any write verb it carries, so `get-or-create` and `findAndModify` are writes. `export` and `dump` are absent from the read vocabulary because they write a file whose path the model chose.
+
+The vocabulary is a security invariant, not a per-deployment setting: widening it to fit one server would widen it for every server, including the ones nobody has added yet. Fail-closed is the point — a tool this rule cannot classify stays away from the model.
+
+The policy rides the same `tools.restrict({ deny })` mask as workspace scope, so a withheld tool is hidden rather than refused at call time. Three consequences:
+
+- **It is the default for every MCP tool, not only for the servers on this page.** The sweep reads the whole `mcp__` namespace, so a server mounted by the profile composition — outside this store and outside every scope mask — is held to the same rule.
+- **A record can waive it, one server at a time.** Unchecking 只读 in the editor stores `readOnly: false`; the row then carries a 可写 chip so the exception is visible, and an absent field in the store means read-only rather than a decision to widen access.
+- **Nothing is silent.** The row reports `已拦截 N 个非只读工具` with the names in its tooltip, `/mcp list` and `/mcp tools <server>` say the same, and the `/servers/call` route refuses a withheld tool naming the policy as its reason.
+
+What the policy cannot see is a read tool whose *arguments* write. `aggregate` is admitted, and `aggregate` can persist through its `$out` and `$merge` stages; the MongoDB server refuses those only when it runs under its own `--readOnly` flag. Add that flag to a server's arguments as well when a pipeline must not persist, and treat this plugin's mask as what keeps write *tools* away from the model rather than as a database-level guarantee.
+
 ## The Settings page
 
 The toolbar's scope selector narrows the list to one scope and its count follows that filter, while the section count also answers the search box — which matches a server's name and, for a stdio server, its command line — so the two differ only while searching. A server created while the list is filtered to one workspace starts in that workspace: the filter is what the person is looking at.
 
-Each row carries what the server *is*: its transport and its scope as chips, its command or URL beneath, and its connection state as the dot on the row's tile — green for a completed handshake, amber while the mount has answered nothing yet, red for a failed one or a mount that never applied, grey for a disabled server. That dot is the whole of the state on the row: its color is read at a glance and the words are its tooltip and accessible name. What can be read elsewhere stays off the line — the tool count the dot already answers, and the `/name` command, which the composer's `/` menu lists. The one command fact worth repeating is a name that would shadow a live `/` command, which is reported in red under the row. The row's actions are the ones it needs: a **探测** button that completes a real MCP handshake, a switch for the enable flag, and **delete**, which still arms on the first click and deletes on the second. Clicking the row body opens the editor.
+Each row carries what the server *is*: its transport, its scope, and its read-only policy as chips, its command or URL beneath, and its connection state as the dot on the row's tile — green for a completed handshake, amber while the mount has answered nothing yet, red for a failed one or a mount that never applied, grey for a disabled server. That dot is the whole of the state on the row: its color is read at a glance and the words are its tooltip and accessible name. What can be read elsewhere stays off the line — the tool count the dot already answers, and the `/name` command, which the composer's `/` menu lists. The one command fact worth repeating is a name that would shadow a live `/` command, which is reported in red under the row. The row's actions are the ones it needs: a **探测** button that completes a real MCP handshake, a switch for the enable flag, and **delete**, which still arms on the first click and deletes on the second. Clicking the row body opens the editor.
 
 Every dropdown here — the scope filter, the editor's scope and transport fields, and the tool picker — is the shared `Menu` primitive from `@deepseek-ai/dsh-client-ui-primitives`, the same control the 通用设置 rows open. A native `<select>` popup is drawn by the operating system and cannot follow the application theme, so in the dark theme its highlighted row rendered white-on-light and the options were unreadable.
 
-Both dialogs offer two ways in: **表单** for name, transport, timeout, and command/arguments/environment (or URL/headers), and **JSON** for a pasted configuration, so a config copied from another tool can be added or rewritten verbatim:
+Both dialogs offer two ways in: **表单** for name, transport, timeout, the read-only policy, and command/arguments/environment (or URL/headers), and **JSON** for a pasted configuration, so a config copied from another tool can be added or rewritten verbatim:
 
 ```json
 {
@@ -61,7 +75,9 @@ Two consequences:
 - **A server whose name is not a valid command name gets no command.** The registry accepts lowercase names only (`[a-z][a-z0-9_-]*`), so a server named `Memory` or `2fa` keeps its tools but is not invocable; the page marks that row. A name that another command already uses is marked as a conflict, because a Session-scoped command shadows the global one of the same name.
 - **A server with no registered tools cannot be woken.** The child's filter names tools, so a server that is still connecting, or that failed to start, returns an error telling you to probe it first.
 
-A server name written **inside a sentence** is a different intent, and the host command source does not offer one: an argument-taking command claims the whole line, so the message it submits is the command alone and anything typed before the name would be discarded. The plugin therefore registers its own `/` source — the menu group `mcp` — which answers only away from the head of the draft, lists every server that registers a command, and settles a pick by inserting the name as plain text. That keeps a multi-step request in one message, with each server named where its instruction is; the names reach the model as text, which reaches the server through its `mcp__<server>__*` namespace. At the head of the draft the source contributes nothing, so a leading `/name` behaves exactly as described above.
+A server name written **inside a sentence** is a different intent, and the host command source does not offer one: an argument-taking command claims the whole line, so the message it submits is the command alone and anything typed before the name would be discarded. The plugin therefore registers its own `/` source — the menu group `mcp` — which answers only away from the head of the draft, lists every server that registers a command, and settles a pick as an **atomic chip**: the composer shows the bare server name, while the chip's clipboard projection stays `/name`, so the draft, a copy, and the model text are what a plain insertion wrote. That keeps a multi-step request in one message, with each server named where its instruction is; the names reach the model as text, which reaches the server through its `mcp__<server>__*` namespace. At the head of the draft the source contributes nothing, so a leading `/name` is claimed and run by the host command source exactly as described above — drawn as the same chip, because the name this source publishes is the name the claim resolves to.
+
+The source also publishes those names as its **lexicon** — the render side's roll of plain-text references — so a `/name` typed in the draft picks up the composer's shared reference treatment as soon as the server list settles, and stays plain text until it does. The roll is synchronous and fetches nothing: an unread list answers nothing rather than starting a read from the render path. Because the source also publishes a **codec**, every name it owns can be drawn as a chip — one node showing the bare name, carrying this fork's MCP color, deleted whole by one Backspace — while a hand-typed token waits for the roll and the claim arrives as text.
 
 ## Storage
 
@@ -76,6 +92,7 @@ Servers live in `$DSH_HOME/mcp-scope.json` (override with `storePath` in the plu
       "transport": "stdio",
       "scope": "global",
       "enabled": true,
+      "readOnly": true,
       "toolCallTimeoutMs": 30000,
       "command": "npx",
       "args": ["-y", "some-mcp-server"],
@@ -87,6 +104,7 @@ Servers live in `$DSH_HOME/mcp-scope.json` (override with `storePath` in the plu
       "transport": "stdio",
       "scope": "/Users/you/project/rust/shell",
       "enabled": true,
+      "readOnly": false,
       "toolCallTimeoutMs": 30000,
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory"],
@@ -104,8 +122,8 @@ Beyond the Settings page, the plugin provides the operating surface for the serv
 
 | Invocation | Output |
 |---|---|
-| `/mcp` or `/mcp list` | Every server this session can use, with its scope and tool count |
-| `/mcp tools <server>` | That server's registered tool names |
+| `/mcp` or `/mcp list` | Every server this session can use, with its scope, its available tool count, and how many tools the read-only policy withheld |
+| `/mcp tools <server>` | That server's available tool names, and the names the read-only policy withheld |
 | `/mcp health` | A real connectivity probe of every visible server |
 | `/mcp probe <server>` | A real connectivity probe of one server |
 
@@ -159,6 +177,9 @@ A credential key submitted with an empty value keeps its stored value: the page 
 ## Known limitations
 
 - **Tool visibility, not connection isolation.** A server outside a session's scope still runs for the process. Only its tools are masked.
+- **The read-only policy judges names, so it withholds read tools it cannot recognize.** A server that publishes a genuine read under a name with no read verb — `collection-storage-size`, `mongodb-logs`, `switch-connection` on the MongoDB server — loses it along with the writes. The row names what was withheld, and `readOnly: false` is the way to accept the wider surface deliberately.
+- **The policy cannot see an argument.** `aggregate` is admitted although its `$out`/`$merge` stages persist, and `execute`-shaped tools are withheld precisely because no name can bound what they run. A database-level guarantee needs the server's own read-only flag as well.
+- **`readOnly: false` is a per-server hole.** It exists because some MCP servers are write tools by design; it is not a scope, and it lifts the policy for every session that can see the server.
 - **`scope` is a path, not a workspace id.** DSH keys workspace membership on the session header's canonical cwd, and so does this plugin; a workspace renamed on disk keeps its old path here until edited.
 - **Disabled servers are unmounted, not masked.** Disabling disposes the client, so its tools disappear for every session.
 - **The page's check starts a silent server one extra time.** While the official client is still retrying its own connection to a server that has produced no tools, opening the page starts that command once more. It happens once per page open per unread mount, never on a timer.
@@ -177,11 +198,11 @@ A profile may still install the bundle explicitly. The row id is the same, and t
 dsh plugin --profile <profile> add /absolute/path/to/deepseek-harness/plugins/dsh-mcp-scope
 ```
 
-This plugin takes no build step: `src/index.js`, `src/probe.js`, `src/spawn-target.js`, `src/scope.js`, and `src/client.js` are the shipped sources.
+This plugin takes no build step: `src/index.js`, `src/probe.js`, `src/readonly.js`, `src/spawn-target.js`, `src/scope.js`, and `src/client.js` are the shipped sources.
 
 ## Tests
 
-`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/spawn-target.test.mjs` pins the rule that decides when a command goes through the command interpreter and the escaping it needs there, against the command line cross-spawn builds for the official client. `tests/mention.client.test.mjs` drives the plugin's own `/` source: it answers inside a draft and never at its head, it names only servers that register a command, and a pick inserts the name as plain text. `tests/dropdown.client.test.mjs`, `tests/status.client.test.mjs`, and `tests/row.client.test.mjs` boot the browser half in jsdom through the shared `tests/harness.mjs`: the first drives the editor — the dropdowns (which is what keeps a native `<select>` from returning), the configurations a paste accepts and the record each one saves in both dialogs, and the stored credentials and working directory an edit must keep; the second drives what a row claims about its connection, which is never `已连接` without a handshake to point at, and when that handshake is asked for — once for the silent mounts when the MCP section is opened, and never on its own; the third drives the row's own line, which drops the facts that can be read elsewhere and keeps the delete button on the row it belongs to.
+`tests/scope.test.mjs` pins the scope rules — `global`, or an absolute path in the spelling the running platform uses, which is what a Windows `D:\...` workspace needed. `tests/readonly.test.mjs` pins the read-only policy's own decisions against the tool names the configured servers actually publish, against a name that proves nothing, and against a compound name that carries a write verb beside a read. `tests/policy.host.test.mjs` boots the host half against a store file on disk with the three workspace packages it imports replaced by stubs, because the enforcement point is the mask installed on each agent: it asserts which names reach that mask, that a server mounted outside the store is held to the same policy, that only an explicit `readOnly: false` lifts it, that a server connecting after the agent exists is still masked, and that `/api/state` reports both the policy and what it withheld. `tests/spawn-target.test.mjs` pins the rule that decides when a command goes through the command interpreter and the escaping it needs there, against the command line cross-spawn builds for the official client. `tests/mention.client.test.mjs` drives the plugin's own `/` source: it answers inside a draft and never at its head, it names only servers that register a command, and a pick lands the atomic chip whose clipboard projection is the `/name` text. `tests/dropdown.client.test.mjs`, `tests/status.client.test.mjs`, `tests/row.client.test.mjs`, and `tests/readonly.client.test.mjs` boot the browser half in jsdom through the shared `tests/harness.mjs`: the first drives the editor — the dropdowns (which is what keeps a native `<select>` from returning), the configurations a paste accepts and the record each one saves in both dialogs, and the stored credentials and working directory an edit must keep; the second drives what a row claims about its connection, which is never `已连接` without a handshake to point at, and when that handshake is asked for — once for the silent mounts when the MCP section is opened, and never on its own; the third drives the row's own line, which drops the facts that can be read elsewhere and keeps the delete button on the row it belongs to; the fourth drives the policy the page shows — which chip a server's record earns, that a server whose every tool was withheld still reads as connected and says how many were withheld, and that the editor opens the box on the stored value and saves what it was left as.
 
 ```sh
 node --test "plugins/dsh-mcp-scope/tests/*.test.mjs"

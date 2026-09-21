@@ -1,7 +1,14 @@
-/** Editable reference tokens share chip hover styling while retaining ordinary text semantics. */
+/**
+ * Editable reference tokens share chip hover styling and ordinary text
+ * semantics for editing, and one Backspace/Delete takes a whole token out
+ * rather than one character of it.
+ */
 import clsx from 'clsx'
-import type { EditorConfig, LexicalEditor, SerializedTextNode } from 'lexical'
-import { TextNode } from 'lexical'
+import type { EditorConfig, LexicalEditor, LexicalNode, SerializedTextNode } from 'lexical'
+import {
+  $getSelection, $isRangeSelection, COMMAND_PRIORITY_HIGH, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND,
+  TextNode,
+} from 'lexical'
 import { registerLexicalTextEntity } from '@lexical/text'
 import { mergeRegister } from '@lexical/utils'
 import { $getRoot } from 'lexical'
@@ -68,6 +75,64 @@ export class TextRefNode extends TextNode {
   override canInsertTextBefore(): boolean {
     return true
   }
+}
+
+/**
+ * The whole token one collapsed-caret edit should remove, or null to let the
+ * default character edit run.
+ *
+ * Backspace takes the token from inside it or from its trailing edge; Delete
+ * from inside it or from its leading edge. The edge the gesture does not move
+ * away from belongs to the neighbour — backspacing at a token's start, or
+ * deleting at its end, is an ordinary edit of the text beside it.
+ *
+ * A caret parked at the far edge of a neighbouring node is still touching the
+ * token, which is how Lexical represents the position just after an entity.
+ *
+ * @param node - the node holding the caret.
+ * @param offset - the caret's offset inside that node.
+ * @param forward - true for Delete, false for Backspace.
+ * @returns the token to remove, or null.
+ */
+function $touchedToken(node: LexicalNode, offset: number, forward: boolean): TextRefNode | null {
+  if (node instanceof TextRefNode) {
+    if (forward) return offset < node.getTextContentSize() ? node : null
+    return offset > 0 ? node : null
+  }
+  const sibling = forward ? node.getNextSibling() : node.getPreviousSibling()
+  if (!(sibling instanceof TextRefNode)) return null
+  const atEdge = forward ? offset === node.getTextContentSize() : offset === 0
+  return atEdge ? sibling : null
+}
+
+/**
+ * Remove one matched `/name` token whole rather than one character of it.
+ *
+ * A matched token is styled like a reference but is still an ordinary text node,
+ * so the browser's own Backspace/Delete would take it apart a character at a
+ * time — leaving a half-token the lexicon no longer matches and the person did
+ * not mean to keep. A collapsed caret touching a token therefore removes the node
+ * whole, which is what an atomic reference chip does; every other caret position
+ * falls through to the default edit unchanged.
+ *
+ * @param editor - the shell-owned editor.
+ * @returns the unregister disposer.
+ */
+export function registerTextRefDeletion(editor: LexicalEditor): () => void {
+  const removeTouched = (forward: boolean) => (): boolean => {
+    const selection = $getSelection()
+    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false
+    const anchor = selection.anchor
+    if (anchor.type !== 'text') return false
+    const token = $touchedToken(anchor.getNode(), anchor.offset, forward)
+    if (token === null) return false
+    token.remove()
+    return true
+  }
+  return mergeRegister(
+    editor.registerCommand(KEY_BACKSPACE_COMMAND, removeTouched(false), COMMAND_PRIORITY_HIGH),
+    editor.registerCommand(KEY_DELETE_COMMAND, removeTouched(true), COMMAND_PRIORITY_HIGH),
+  )
 }
 
 /**

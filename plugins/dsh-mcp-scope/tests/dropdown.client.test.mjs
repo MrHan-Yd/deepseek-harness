@@ -101,6 +101,9 @@ test('editing keeps the stored working directory the form no longer shows', asyn
       transport: 'stdio',
       toolCallTimeoutMs: 30000,
       enabled: true,
+      // The row above carries no `readOnly`, so the form opens on the Host's
+      // default and submits it back unchanged.
+      readOnly: true,
       command: 'npx',
       args: ['-y', 'pkg'],
       cwd: '/srv/mongo',

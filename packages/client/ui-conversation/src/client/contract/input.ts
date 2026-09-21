@@ -19,6 +19,24 @@ import type { InputSubmitMode } from './composer-submission.ts'
  */
 export type InputTriggerChar = '/' | '@' | '#'
 
+/**
+ * Owner of one hot lexicon name.
+ *
+ * The aggregated lexicon answers which names are matchable; this answers who
+ * published each one, which is what lets the composer draw an MCP server and a
+ * subagent differently while showing both with the same treatment.
+ *
+ * `insertable` follows the source's codec: a chip is submittable only through
+ * the codec of the source it names, so a name whose owner has none stays plain
+ * text — a chip would refuse the send rather than degrade silently.
+ */
+export interface LexiconOwner {
+  /** Name of the source that published this name. */
+  readonly source: string
+  /** Whether that source carries a reference codec, i.e. can back a chip. */
+  readonly insertable: boolean
+}
+
 /** Attachment payload passed to a claimed command submission. */
 export type SubmitAttachment =
   | {
@@ -105,6 +123,13 @@ export interface InputTriggerHit {
 export interface InputTriggerController {
   readonly launcher: ObservableSnapshot<string | null>
   readonly lexicon: ObservableSnapshot<ReadonlyMap<InputTriggerChar, readonly string[]>>
+  /**
+   * Owner of one hot lexicon name.
+   * @param trigger - trigger char the name was published under.
+   * @param name - matchable name without its trigger.
+   * @returns the publishing source and whether it can back a chip, or undefined when the name is not hot.
+   */
+  lexiconOwner(trigger: InputTriggerChar, name: string): LexiconOwner | undefined
   /** @param draft - current draft. @param caret - caret offset. @param guard - availability tier. @param draftRev - input revision. */
   track(
     draft: string,

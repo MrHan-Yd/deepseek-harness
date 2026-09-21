@@ -916,6 +916,8 @@ window.__ModuleLoader__.load({
       let entries
       /** In-flight read, shared so concurrent keystrokes issue one request. */
       let pending
+      /** Render-side subscribers of the name roll, one per live Session scope. */
+      const watchers = new Set()
       const load = (refresh) => {
         if (pending !== undefined) return pending
         if (entries !== undefined && refresh !== true) return Promise.resolve()
@@ -924,6 +926,16 @@ window.__ModuleLoader__.load({
             entries = (state.agents ?? [])
               .filter(agent => agent.enabled !== false)
               .map(agent => ({ name: agent.name, description: agent.description ?? '' }))
+            // The draft decorates `/name` tokens the moment a name is on the
+            // roll, so a settle has to reach the editor rather than wait for the
+            // next keystroke.
+            for (const watcher of [...watchers]) {
+              try {
+                watcher()
+              } catch (error) {
+                console.error('[dsh-agent-scope] lexicon listener failed:', error)
+              }
+            }
           },
           () => {
             // An unreadable list costs the menu its completions, never the
@@ -954,8 +966,35 @@ window.__ModuleLoader__.load({
         },
         onPick(pick) {
           // The catalog name, never a localized alias: the draft reaches the
-          // model, which delegates by the tool's own name.
-          return { text: `/${pick.candidate.name} ` }
+          // model, which delegates by the tool's own name. The pick lands as an
+          // atomic chip whose clipboard projection is `/name`, so the draft, the
+          // copy, and the model text are what the plain insertion wrote — while
+          // the composer shows the bare name and deletes it whole.
+          return {
+            insert: {
+              source: 'subagent',
+              ref: pick.candidate.name,
+              label: pick.candidate.name,
+              clipboardText: `/${pick.candidate.name}`,
+            },
+          }
+        },
+        // A chip is submittable only through the codec of the source it names,
+        // so this source carries one.
+        codec: {
+          clipboardText: ref => `/${ref}`,
+          serialize: async ref => `/${ref}`,
+        },
+        // The render side scans the draft for `/name` and decorates an exact
+        // match, which is what gives a sub-agent named in a sentence the same
+        // chip a `/` reference has. Synchronous and fetch-free by contract: an
+        // unread roll answers undefined and stays plain text.
+        lexicon() {
+          return entries?.map(entry => entry.name)
+        },
+        subscribeLexicon(_session, listener) {
+          watchers.add(listener)
+          return () => { watchers.delete(listener) }
         },
         warm() { void load(false) },
       }
