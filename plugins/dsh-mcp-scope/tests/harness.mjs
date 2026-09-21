@@ -59,15 +59,27 @@ export function loadBundle() {
     anchor,
     open === true
       ? React.createElement('div', { role: 'menu' },
-        items.map(item => React.createElement('button', {
-          key: item.id,
-          type: 'button',
-          role: 'menuitem',
-          'data-selected': item.id === selectedId ? 'true' : undefined,
-          onClick: () => { onSelect(item.id) },
-        }, item.label)))
+        items.map((item) => {
+          // The three entry kinds the primitive distinguishes: a row, a
+          // hairline, and a heading. Rendering them all as rows would let a
+          // separator read as a menu item in the callers' assertions.
+          if (item.type === 'separator') return React.createElement('div', { key: item.id, role: 'separator' })
+          if (item.type === 'label') return React.createElement('div', { key: item.id, role: 'presentation' }, item.text)
+          return React.createElement('button', {
+            key: item.id,
+            type: 'button',
+            role: 'menuitem',
+            disabled: item.disabled === true,
+            'data-selected': item.id === selectedId ? 'true' : undefined,
+            // The real primitive portals the list out of the row, so a chosen
+            // row never reaches the row's own click handler. This stub keeps
+            // the list inline, and swallows the click instead.
+            onClick: (event) => { event.stopPropagation(); onSelect(item.id) },
+          }, item.label)
+        }))
       : null)
   const IconChevronDownOutline14 = () => React.createElement('svg')
+  const IconTrashOutline16 = () => React.createElement('svg')
 
   const state = {
     servers: [],
@@ -92,7 +104,7 @@ export function loadBundle() {
   const module = loaded.factory((spec) => {
     required.push(spec)
     if (spec === 'react') return React
-    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutline14, Menu }
+    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutline14, IconTrashOutline16, Menu }
     throw new Error(`unexpected require(${JSON.stringify(spec)})`)
   })
 
@@ -130,6 +142,37 @@ export function loadBundle() {
 }
 
 /**
+ * One row of the Host's `/state` answer, with every field the page reads.
+ *
+ * `health` is the handshake reading the Host stores; `null` is "never read",
+ * which is not the same as "read and failed".
+ *
+ * @param overrides - the fields this row changes.
+ * @returns the row.
+ */
+export function serverRow(overrides) {
+  return {
+    serverName: 'row',
+    transport: 'stdio',
+    scope: 'global',
+    enabled: true,
+    mounted: true,
+    mountError: null,
+    toolCallTimeoutMs: 30000,
+    command: 'npx',
+    args: [],
+    cwd: '',
+    envKeys: [],
+    commandName: null,
+    commandConflict: false,
+    sessions: 0,
+    tools: [],
+    health: null,
+    ...overrides,
+  }
+}
+
+/**
  * Render the Settings page into its own container.
  * @param bundle - the handles {@link loadBundle} returned.
  * @returns the page handles: the queries its assertions read it through, plus teardown.
@@ -145,6 +188,12 @@ export async function openPage(bundle) {
   await act(async () => { root.render(React.createElement(bundle.section, bundle.props)) })
   await flush(() => {})
 
+  const card = (serverName) => [...container.querySelectorAll('[role="button"][title="编辑"]')]
+    .find(head => head.textContent.startsWith(serverName))
+    // The header is the clickable part; the status dot, the readings, and the
+    // trial panel are its siblings inside the card.
+    ?.parentElement
+
   return {
     container,
     act,
@@ -153,11 +202,14 @@ export async function openPage(bundle) {
     trigger: (label) => container.querySelector(`button[aria-haspopup="menu"][aria-label="${label}"]`),
     rows: () => [...container.querySelectorAll('[role="menuitem"]')],
     /** One installed server's whole card, found by the name it leads with. */
-    card: (serverName) => [...container.querySelectorAll('[role="button"][title="编辑"]')]
-      .find(head => head.textContent.startsWith(serverName))
-      // The header is the clickable part; the status chips, the readings, and
-      // the trial panel are its siblings inside the card.
-      ?.parentElement,
+    card,
+    /**
+     * The connection state a card's dot carries: its color is the state, and
+     * this accessible name is what that color stands for.
+     * @param serverName - the server whose card to read.
+     * @returns the dot's accessible name, or null when the card has no dot.
+     */
+    status: (serverName) => card(serverName)?.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null,
     close: async () => { await act(async () => { root.unmount() }); container.remove() },
   }
 }

@@ -19,11 +19,12 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
     const React = require('react')
-    // The dropdown trigger's chevron and list come from the shared primitives:
-    // `Menu` is the control every other Settings row opens, and the module table
-    // seeds the package for dynamic bundles, so no build step or manifest entry
-    // is needed to reach it.
-    const { IconChevronDownOutline14, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
+    // The dropdown trigger's chevron and list, and the row's delete glyph, come
+    // from the shared primitives: `Menu` is the control every other Settings row
+    // opens, and its trash is the same icon the Models page deletes a model
+    // with. The module table seeds the package for dynamic bundles, so no build
+    // step or manifest entry is needed to reach it.
+    const { IconChevronDownOutline14, IconTrashOutline16, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useState } = React
@@ -92,7 +93,6 @@ window.__ModuleLoader__.load({
       errorPrefix: '操作失败',
       instructionFound: '指令文件',
       instructionMissing: '未找到指令文件',
-      commandChipHint: '在输入框输入 / 即可调用；它跑完后结果会作为通知回到当前会话',
       injectBadge: 'AGENTS.md 已注入',
       injectBadgeMissing: 'AGENTS.md 文件不存在',
       mountError: '装载原因',
@@ -155,7 +155,6 @@ window.__ModuleLoader__.load({
       errorPrefix: 'Failed',
       instructionFound: 'Instruction file',
       instructionMissing: 'No instruction file at',
-      commandChipHint: 'Type / in the composer to run it; the result returns to this session as a notice',
       injectBadge: 'AGENTS.md injected',
       injectBadgeMissing: 'AGENTS.md missing',
       mountError: 'Mount reason',
@@ -179,6 +178,13 @@ window.__ModuleLoader__.load({
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
       width: 32, height: 32, padding: 0, borderRadius: 8, border, background: 'transparent',
       color: 'inherit', cursor: 'pointer',
+    }
+    // A label-free affordance inside a row: no box of its own, painted only
+    // while the pointer is on it, the shape the Models page rows use.
+    const bareIconButtonStyle = {
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+      width: 28, height: 28, padding: 0, borderRadius: 6, border: 'none',
+      background: 'transparent', color: 'inherit', cursor: 'pointer',
     }
     const chipStyle = {
       fontSize: 11, padding: '2px 8px', borderRadius: 6, border: softBorder,
@@ -217,7 +223,6 @@ window.__ModuleLoader__.load({
     const SearchGlyph = (props) => h(Glyph, { ...props, d: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.3-4.3' })
     const RefreshGlyph = (props) => h(Glyph, { ...props, d: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6' })
     const PlusGlyph = (props) => h(Glyph, { ...props, d: 'M12 5v14M5 12h14' })
-    const TrashGlyph = (props) => h(Glyph, { ...props, d: 'M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v6M14 11v6' })
     const ScreenGlyph = (props) => h(Glyph, { ...props, d: 'M3 5h18v11H3zM9 20h6M12 16v4' })
 
     /**
@@ -349,6 +354,36 @@ window.__ModuleLoader__.load({
           boxShadow: '0 1px 2px rgba(0,0,0,.35)',
         },
       }))
+    }
+
+    /**
+     * The delete button: it arms on the first click and deletes on the second.
+     *
+     * @param props - the bound dictionary, whether this row is armed, and the delete.
+     * @returns the button element.
+     */
+    function DeleteButton(props) {
+      const { t, pending, onRemove } = props
+      const [hovered, setHovered] = useState(false)
+      const label = pending ? t('confirmRemove') : t('remove')
+      return h('button', {
+        type: 'button',
+        title: label,
+        'aria-label': label,
+        onMouseEnter: () => { setHovered(true) },
+        onMouseLeave: () => { setHovered(false) },
+        onClick: (event) => { event.stopPropagation(); onRemove() },
+        style: {
+          ...bareIconButtonStyle,
+          width: 'auto', padding: pending ? '0 8px' : 0,
+          color: pending ? '#e5484d' : 'inherit',
+          opacity: pending || hovered ? 1 : 0.55,
+          background: pending
+            ? 'color-mix(in srgb, #e5484d 14%, transparent)'
+            : (hovered ? 'color-mix(in srgb, currentColor 10%, transparent)' : 'transparent'),
+          transition: 'background 120ms ease',
+        },
+      }, h(IconTrashOutline16, { size: 14 }), pending ? h('span', { style: { fontSize: 12 } }, label) : null)
     }
 
     /**
@@ -600,12 +635,9 @@ window.__ModuleLoader__.load({
      */
     function AgentRow(props) {
       const { t, agent, pending, onEdit, onToggle, onRemove } = props
+      // The definition's name *is* its slash command, and the composer's `/`
+      // menu lists it, so the row does not repeat it.
       const badges = [
-        h('span', {
-          key: 'command',
-          style: { ...chipStyle, fontFamily: 'ui-monospace, monospace' },
-          title: t('commandChipHint'),
-        }, `/${agent.name}`),
         h('span', {
           key: 'model',
           style: chipStyle,
@@ -674,20 +706,11 @@ window.__ModuleLoader__.load({
           title: agent.enabled ? t('disabled') : t('enabled'),
           onChange: () => onToggle(),
         }),
-        h('button', {
-          type: 'button',
-          title: pending ? t('confirmRemove') : t('remove'),
-          onClick: (event) => {
-            event.stopPropagation()
-            onRemove()
-          },
-          style: {
-            ...iconButtonStyle,
-            width: 'auto', padding: pending ? '0 10px' : 0,
-            color: pending ? '#e5484d' : 'inherit',
-            opacity: pending ? 1 : 0.6,
-          },
-        }, h(TrashGlyph, { size: 16 }), pending ? h('span', { style: { fontSize: 12 } }, t('confirmRemove')) : null)))
+        h(DeleteButton, {
+          t,
+          pending,
+          onRemove: () => onRemove(),
+        })))
     }
 
     /**

@@ -21,34 +21,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { loadBundle, openPage } from './harness.mjs'
-
-/**
- * One row of the Host's `/state` answer.
- * @param overrides - the fields this row changes.
- * @returns the row.
- */
-function serverRow(overrides) {
-  return {
-    serverName: 'row',
-    transport: 'stdio',
-    scope: 'global',
-    enabled: true,
-    mounted: true,
-    mountError: null,
-    toolCallTimeoutMs: 30000,
-    command: 'npx',
-    args: [],
-    cwd: '',
-    envKeys: [],
-    commandName: null,
-    commandConflict: false,
-    sessions: 0,
-    tools: [],
-    health: null,
-    ...overrides,
-  }
-}
+import { loadBundle, openPage, serverRow } from './harness.mjs'
 
 test('a mount is called connected only on evidence of a handshake', async () => {
   const bundle = loadBundle()
@@ -71,13 +44,15 @@ test('a mount is called connected only on evidence of a handshake', async () => 
   const page = await openPage(bundle)
   const text = (name) => page.card(name).textContent
 
-  assert.ok(text('live').includes('● 已连接'), 'registered tools are proof of a handshake')
-  assert.ok(text('pending').includes('◐ 连接中…'), 'a silent mount is not called connected')
-  assert.ok(text('healed').includes('● 已连接'), 'a watched handshake counts even with no tools')
-  assert.ok(text('unmounted').includes('○ 装载失败'))
-  assert.ok(text('off').includes('○ 已停用'))
+  // The card's dot is the state; its accessible name is the words the color
+  // stands for, so these assertions read the same claim the tooltip shows.
+  assert.equal(page.status('live'), '已连接', 'registered tools are proof of a handshake')
+  assert.equal(page.status('pending'), '连接中…', 'a silent mount is not called connected')
+  assert.equal(page.status('healed'), '已连接', 'a watched handshake counts even with no tools')
+  assert.equal(page.status('unmounted'), '装载失败')
+  assert.equal(page.status('off'), '已停用')
 
-  assert.ok(text('dead').includes('○ 不可达'), 'a failed handshake is never reported as connected')
+  assert.equal(page.status('dead'), '不可达', 'a failed handshake is never reported as connected')
   assert.ok(text('dead').includes('不可达 (页面检查)'), 'the reading names where it came from')
   assert.ok(
     text('dead').includes('process exited before initialize response (code 1)'),
@@ -107,7 +82,7 @@ test('a probe asked for by hand replaces the reading the page took', async () =>
   const text = page.card('dead').textContent
   assert.ok(text.includes('可达 — MCP initialize ok'), 'the manual reading is shown as its own result')
   assert.equal(text.includes('页面检查'), false, 'the superseded reading is gone')
-  assert.ok(text.includes('● 已连接'), 'a completed handshake is connection evidence')
+  assert.equal(page.status('dead'), '已连接', 'a completed handshake is connection evidence')
 
   await page.close()
 })

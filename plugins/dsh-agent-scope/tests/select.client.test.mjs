@@ -80,6 +80,7 @@ function loadBundle() {
           }, entry.label)))
       : null)
   const IconChevronDownOutline14 = () => React.createElement('svg')
+  const IconTrashOutline16 = () => React.createElement('svg')
 
   let loaded
   dom.window.__ModuleLoader__ = { load: (mod) => { loaded = mod } }
@@ -92,7 +93,7 @@ function loadBundle() {
   const module = loaded.factory((spec) => {
     required.push(spec)
     if (spec === 'react') return React
-    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutline14, Menu }
+    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutline14, IconTrashOutline16, Menu }
     throw new Error(`unexpected require(${JSON.stringify(spec)})`)
   })
 
@@ -121,6 +122,7 @@ function loadBundle() {
     document: dom.window.document,
     required,
     posts,
+    state,
     section,
     props: { t: ctx.locale.bind('settings.agentScope'), ...registration.inject() },
   }
@@ -187,6 +189,86 @@ test('the sub-agent editor opens its dropdowns instead of native selects', async
       tools: { mode: 'all', allow: [] },
     },
   })
+
+  await act(async () => { root.unmount() })
+  container.remove()
+})
+
+test('delete on a sub-agent row arms before it deletes', async () => {
+  const bundle = loadBundle()
+  bundle.state.agents = [{
+    name: 'code-reviewer',
+    color: '#e5484d',
+    scope: 'global',
+    enabled: true,
+    mounted: true,
+    sessions: 0,
+    description: 'A demanding reviewer.',
+    model: null,
+    tools: { mode: 'all', allow: [] },
+    injectAgentsMd: false,
+    instructionFile: { exists: true },
+  }]
+  const { React, createRoot, document } = bundle
+  const act = React.act ?? (async (fn) => { await fn() })
+  const flush = async (work) => { await act(async () => { work(); await new Promise(resolve => { setTimeout(resolve, 0) }) }) }
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => { root.render(React.createElement(bundle.section, bundle.props)) })
+  await flush(() => {})
+
+  // The row's delete is the shared trash glyph in a button with no box of its
+  // own, and it still arms on the first click before it removes anything.
+  const remove = () => container.querySelector('button[title="删除"], button[title="确认删除"]')
+  assert.ok(remove(), 'the row carries its own delete button')
+  assert.ok(remove().querySelector('svg'), 'the button is the glyph, not a labelled box')
+
+  await flush(() => { remove().click() })
+  assert.deepEqual(
+    bundle.posts.filter(body => body.name === 'code-reviewer'),
+    [],
+    'the first click arms instead of deleting',
+  )
+  assert.equal(remove().getAttribute('title'), '确认删除')
+
+  await flush(() => { remove().click() })
+  assert.deepEqual(bundle.posts.at(-1), { name: 'code-reviewer' })
+
+  await act(async () => { root.unmount() })
+  container.remove()
+})
+
+test('a row does not repeat the slash command its name already is', async () => {
+  const bundle = loadBundle()
+  bundle.state.agents = [{
+    name: 'code-reviewer',
+    color: '#e5484d',
+    scope: 'global',
+    enabled: true,
+    mounted: true,
+    sessions: 0,
+    description: 'A demanding reviewer.',
+    model: null,
+    tools: { mode: 'all', allow: [] },
+    injectAgentsMd: false,
+    instructionFile: { exists: true },
+  }]
+  const { React, createRoot, document } = bundle
+  const act = React.act ?? (async (fn) => { await fn() })
+  const flush = async (work) => { await act(async () => { work(); await new Promise(resolve => { setTimeout(resolve, 0) }) }) }
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => { root.render(React.createElement(bundle.section, bundle.props)) })
+  await flush(() => {})
+
+  // The name is the command, and the composer's `/` menu lists it: the row
+  // names the definition once, without the `/`.
+  assert.ok(container.textContent.includes('code-reviewer'), 'the row names the definition')
+  assert.equal(container.textContent.includes('/code-reviewer'), false, 'and does not repeat it as a command')
 
   await act(async () => { root.unmount() })
   container.remove()

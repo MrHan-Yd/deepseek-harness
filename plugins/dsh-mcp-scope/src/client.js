@@ -18,11 +18,12 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
     const React = require('react')
-    // The dropdown trigger's chevron and list come from the shared primitives:
-    // `Menu` is the control every other Settings row opens, and the module table
-    // seeds the package for dynamic bundles, so no build step or manifest entry
-    // is needed to reach it.
-    const { IconChevronDownOutline14, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
+    // The dropdown trigger's chevron and list, and the row's delete glyph, come
+    // from the shared primitives: `Menu` is the control every other Settings row
+    // opens, and its trash is the same icon the Models page deletes a model
+    // with. The module table seeds the package for dynamic bundles, so no build
+    // step or manifest entry is needed to reach it.
+    const { IconChevronDownOutline14, IconTrashOutline16, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useState } = React
@@ -94,25 +95,13 @@ window.__ModuleLoader__.load({
       cancel: '取消',
       saving: '保存中…',
       loading: '加载中…',
-      tools: '个工具',
       sessions: '个会话可见',
       probe: '探测',
       probing: '探测中…',
       reachable: '可达',
       unreachable: '不可达',
-      trial: '试用',
-      trialTool: '工具',
-      trialArgs: '参数（JSON）',
-      trialRun: '运行',
-      trialRunning: '运行中…',
-      trialResult: '返回',
-      trialHint: '经官方工具管线调用（权限与审批照常生效）；结果只显示在本页，不进模型上下文。',
-      trialNoTools: '该服务器当前没有注册工具。',
       scopeHint: '选择该服务器在哪些会话中可见。',
       errorPrefix: '操作失败',
-      commandChipHint: '在输入框输入 / 即可让一个只能调用这个服务器工具的子代理干活，结果会回到当前会话',
-      commandUnavailable: '名称不能作命令',
-      commandUnavailableHint: '斜杠命令只接受小写字母开头的名字，重命名服务器后即可用 / 调用',
       commandConflict: '命令名冲突',
       commandConflictHint: '已有同名命令，这个服务器的 / 命令会遮蔽它',
       storeAt: '配置存储',
@@ -183,25 +172,13 @@ window.__ModuleLoader__.load({
       cancel: 'Cancel',
       saving: 'Saving…',
       loading: 'Loading…',
-      tools: 'tools',
       sessions: 'live sessions',
       probe: 'Probe',
       probing: 'Probing…',
       reachable: 'Reachable',
       unreachable: 'Unreachable',
-      trial: 'Trial',
-      trialTool: 'Tool',
-      trialArgs: 'Arguments (JSON)',
-      trialRun: 'Run',
-      trialRunning: 'Running…',
-      trialResult: 'Result',
-      trialHint: 'Runs through the official tool pipeline (permission and approval still apply); the result stays on this page and never enters model context.',
-      trialNoTools: 'This server has no registered tools yet.',
       scopeHint: 'Choose which sessions can see this server.',
       errorPrefix: 'Failed',
-      commandChipHint: 'Type / in the composer to run a child agent limited to this server’s tools; its result returns to this session',
-      commandUnavailable: 'No / command',
-      commandUnavailableHint: 'A slash command name must start with a lowercase letter; rename the server to invoke it as /name',
       commandConflict: 'Command name taken',
       commandConflictHint: 'Another command already uses this name, so this server’s / command shadows it',
       storeAt: 'Config store',
@@ -224,6 +201,13 @@ window.__ModuleLoader__.load({
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
       width: 32, height: 32, padding: 0, borderRadius: 8, border, background: 'transparent',
       color: 'inherit', cursor: 'pointer',
+    }
+    // A label-free affordance inside a row: no box of its own, painted only
+    // while the pointer is on it, the shape the Models page rows use.
+    const bareIconButtonStyle = {
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+      width: 28, height: 28, padding: 0, borderRadius: 6, border: 'none',
+      background: 'transparent', color: 'inherit', cursor: 'pointer',
     }
     const chipStyle = {
       fontSize: 11, padding: '2px 8px', borderRadius: 6, border: softBorder,
@@ -261,10 +245,8 @@ window.__ModuleLoader__.load({
     const SearchGlyph = (props) => h(Glyph, { ...props, d: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.3-4.3' })
     const RefreshGlyph = (props) => h(Glyph, { ...props, d: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6' })
     const PlusGlyph = (props) => h(Glyph, { ...props, d: 'M12 5v14M5 12h14' })
-    const TrashGlyph = (props) => h(Glyph, { ...props, d: 'M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v6M14 11v6' })
     const ScreenGlyph = (props) => h(Glyph, { ...props, d: 'M3 5h18v11H3zM9 20h6M12 16v4' })
     const WaveGlyph = (props) => h(Glyph, { ...props, d: 'M3 12h3l2.5-6 4 12 2.5-6h6' })
-    const PlayGlyph = (props) => h(Glyph, { ...props, d: 'M8 5.5 18 12 8 18.5z' })
 
     /**
      * One request against the host half.
@@ -388,7 +370,7 @@ window.__ModuleLoader__.load({
 
     /**
      * The tile that stands in for a server's avatar.
-     * @param props - the glyph to show.
+     * @param props - the glyph to show, plus the status dot's color and label.
      * @returns the tile element.
      */
     function Tile(props) {
@@ -398,7 +380,21 @@ window.__ModuleLoader__.load({
           background: subtle, display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0, opacity: 0.9,
         },
-      }, props.children)
+      },
+      props.children,
+      // The status dot: its color is the whole row's connection state, and the
+      // words that state stands for are its tooltip and accessible name.
+      props.badge === undefined
+        ? null
+        : h('span', {
+          role: 'img',
+          'aria-label': props.badgeLabel,
+          title: props.badgeLabel,
+          style: {
+            position: 'absolute', right: 3, bottom: 3, width: 10, height: 10, borderRadius: 999,
+            background: props.badge,
+          },
+        }))
     }
 
     /**
@@ -923,12 +919,42 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The delete button: it arms on the first click and deletes on the second.
+     *
+     * @param props - the bound dictionary, whether this row is armed, and the delete.
+     * @returns the button element.
+     */
+    function DeleteButton(props) {
+      const { t, pending, onRemove } = props
+      const [hovered, setHovered] = useState(false)
+      const label = pending ? t('confirmRemove') : t('remove')
+      return h('button', {
+        type: 'button',
+        title: label,
+        'aria-label': label,
+        onMouseEnter: () => { setHovered(true) },
+        onMouseLeave: () => { setHovered(false) },
+        onClick: (event) => { event.stopPropagation(); onRemove() },
+        style: {
+          ...bareIconButtonStyle,
+          width: 'auto', padding: pending ? '0 8px' : 0,
+          color: pending ? '#e5484d' : 'inherit',
+          opacity: pending || hovered ? 1 : 0.55,
+          background: pending
+            ? 'color-mix(in srgb, #e5484d 14%, transparent)'
+            : (hovered ? 'color-mix(in srgb, currentColor 10%, transparent)' : 'transparent'),
+          transition: 'background 120ms ease',
+        },
+      }, h(IconTrashOutline16, { size: 14 }), pending ? h('span', { style: { fontSize: 12 } }, label) : null)
+    }
+
+    /**
      * One installed server row.
      * @param props - the record, its title lookup, and the row actions.
      * @returns the row element.
      */
     function ServerRow(props) {
-      const { t, server, probe, pending, trial, trialResult, trialBusy, handlers } = props
+      const { t, server, probe, pending, handlers } = props
       const isGlobal = server.scope === 'global'
       const scopeBadge = isGlobal ? t('global') : `${t('workspace')} · ${props.titleOf(server.scope)}`
       const tools = server.tools ?? []
@@ -939,40 +965,23 @@ window.__ModuleLoader__.load({
       // when its tools arrived, the page's own check completed a handshake, or
       // a probe asked for by hand did. A mount with none of those is still
       // connecting, and one whose handshake failed is unreachable — never
-      // connected.
+      // connected. The state is the tile's dot; its words are the tooltip.
       const status = !server.enabled
-        ? { text: `○ ${t('disabled')}`, color: undefined }
+        ? { label: t('disabled') }
         : server.mounted !== true
-          ? { text: `○ ${t('mountFailed')}`, color: '#e5484d' }
+          ? { label: t('mountFailed'), color: '#e5484d' }
           : tools.length > 0 || health?.reachable === true || probe?.reachable === true
-            ? { text: `● ${t('connected')}`, color: '#30a46c' }
+            ? { label: t('connected'), color: '#30a46c' }
             : health?.reachable === false || probe?.reachable === false
-              ? { text: `○ ${t('unreachable')}`, color: '#e5484d' }
-              : { text: `◐ ${t('connecting')}`, color: '#f5a623' }
+              ? { label: t('unreachable'), color: '#e5484d' }
+              : { label: t('connecting'), color: '#f5a623' }
       const target = server.transport === 'stdio'
         ? `${server.command} ${(server.args ?? []).join(' ')}`.trim()
         : server.url
 
       const chips = [
         h('span', { key: 'transport', style: chipStyle }, server.transport),
-        server.commandName === null
-          ? h('span', {
-            key: 'command',
-            style: { ...chipStyle, color: '#e5484d', opacity: 0.9 },
-            title: t('commandUnavailableHint'),
-          }, t('commandUnavailable'))
-          : h('span', {
-            key: 'command',
-            style: {
-              ...chipStyle, fontFamily: 'ui-monospace, monospace',
-              color: server.commandConflict === true ? '#e5484d' : undefined,
-            },
-            title: server.commandConflict === true ? t('commandConflictHint') : t('commandChipHint'),
-          }, server.commandConflict === true ? `/${server.commandName} ${t('commandConflict')}` : `/${server.commandName}`),
         h('span', { key: 'scope', style: chipStyle }, scopeBadge),
-        h('span', { key: 'status', style: { ...chipStyle, color: status.color } }, status.text),
-        h('span', { key: 'tools', style: chipStyle },
-          `${tools.length} ${t('tools')}`),
       ]
       if (server.mounted && (server.sessions ?? 0) > 0) {
         chips.push(h('span', {
@@ -1009,7 +1018,10 @@ window.__ModuleLoader__.load({
         },
         style: { display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' },
       },
-      h(Tile, null, h(PlugGlyph, { size: 21 })),
+      h(Tile, {
+        badge: status.color ?? 'color-mix(in srgb, currentColor 32%, transparent)',
+        badgeLabel: status.label,
+      }, h(PlugGlyph, { size: 21 })),
       h('div', { style: { flex: 1, minWidth: 0 } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
           h('span', { style: { fontWeight: 600, fontSize: 14 } }, server.serverName),
@@ -1020,9 +1032,17 @@ window.__ModuleLoader__.load({
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           },
         }, target),
+        // A mount that never applied, and a / command that would shadow a live
+        // one: the two facts a server can carry that the person has to act on.
         server.mountError === null || server.mountError === undefined
           ? null
-          : h('div', { style: { fontSize: 12, color: '#e5484d', marginTop: 6 } }, server.mountError)),
+          : h('div', { style: { fontSize: 12, color: '#e5484d', marginTop: 6 } }, server.mountError),
+        server.commandConflict === true
+          ? h('div', {
+            style: { fontSize: 12, color: '#e5484d', marginTop: 6 },
+            title: t('commandConflictHint'),
+          }, `/${server.commandName} ${t('commandConflict')}`)
+          : null),
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 } },
         ghostButton(
           h(WaveGlyph, { size: 13 }),
@@ -1030,28 +1050,16 @@ window.__ModuleLoader__.load({
           () => handlers.onProbe(),
           { opacity: probe?.busy === true ? 0.6 : 1 },
         ),
-        ghostButton(
-          h(PlayGlyph, { size: 13 }),
-          t('trial'),
-          () => handlers.onTrial(),
-          { opacity: server.mounted === true ? 1 : 0.5 },
-        ),
         h(Switch, {
           checked: server.enabled,
           title: server.enabled ? t('disabled') : t('enabled'),
           onChange: () => handlers.onToggle(),
         }),
-        h('button', {
-          type: 'button',
-          title: pending ? t('confirmRemove') : t('remove'),
-          onClick: (event) => { event.stopPropagation(); handlers.onRemove() },
-          style: {
-            ...iconButtonStyle,
-            width: 'auto', padding: pending ? '0 10px' : 0,
-            color: pending ? '#e5484d' : 'inherit',
-            opacity: pending ? 1 : 0.6,
-          },
-        }, h(TrashGlyph, { size: 16 }), pending ? h('span', { style: { fontSize: 12 } }, t('confirmRemove')) : null))),
+        h(DeleteButton, {
+          t,
+          pending,
+          onRemove: () => handlers.onRemove(),
+        }))),
 
       probe === undefined || probe.busy === true
         ? null
@@ -1062,67 +1070,7 @@ window.__ModuleLoader__.load({
           },
         }, `${probe.reachable === true ? t('reachable') : t('unreachable')} — ${probe.detail ?? ''}`),
 
-      pageCheckLine(health, probe, t),
-
-      trial === undefined
-        ? null
-        : h('div', { style: { marginTop: 12, borderTop: border, paddingTop: 12 } },
-          h('div', { style: { fontSize: 12, opacity: 0.7, marginBottom: 10 } }, t('trialHint')),
-          (server.tools ?? []).length === 0
-            ? h('div', { style: { fontSize: 12, opacity: 0.6 } }, t('trialNoTools'))
-            : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-              h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialTool'),
-                h('div', { style: { marginTop: 4 } },
-                  h(Select, {
-                    options: (server.tools ?? []).map(toolName => ({ value: toolName, label: toolName })),
-                    value: trial.toolName,
-                    onChange: toolName => handlers.onTrialChange({ ...trial, toolName }),
-                    ariaLabel: t('trialTool'),
-                    block: true,
-                  }))),
-              h('label', { style: { fontSize: 12, opacity: 0.7 } }, t('trialArgs'),
-                h('textarea', {
-                  style: { ...fieldStyle, marginTop: 4, minHeight: 60, fontFamily: 'ui-monospace, monospace' },
-                  value: trial.args,
-                  onChange: event => handlers.onTrialChange({ ...trial, args: event.target.value }),
-                })),
-              h('div', { style: { display: 'flex', gap: 8 } },
-                h('button', {
-                  style: { ...buttonStyle, fontWeight: 600, opacity: trialBusy ? 0.6 : 1 },
-                  disabled: trialBusy,
-                  onClick: () => { void handlers.onTrialRun() },
-                }, trialBusy ? t('trialRunning') : t('trialRun')),
-                h('button', { style: buttonStyle, onClick: () => handlers.onTrialClose() }, t('cancel'))),
-              trialResult === undefined
-                ? null
-                : h('div', null,
-                  h('div', { style: { fontSize: 12, opacity: 0.7, marginBottom: 4 } },
-                    `${t('trialResult')}${trialResult.durationMs === undefined ? '' : ` · ${trialResult.durationMs}ms`}${trialResult.isError === true ? ' · error' : ''}`),
-                  h('pre', {
-                    style: {
-                      margin: 0, padding: 10, borderRadius: 8, border, background: subtle,
-                      fontSize: 11, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap',
-                    },
-                  }, trialResult.resultJson ?? '')))))
-    }
-
-    /**
-     * Read the current session id from the sessions store face (structural:
-     * only the leaf this page needs is read, so a store-shape change across
-     * harness lines degrades to "no session" instead of throwing).
-     * @param sessions - the sessions service face.
-     * @returns the current session id, or undefined.
-     */
-    function currentSessionId(sessions) {
-      try {
-        const list = sessions?.list
-        const getSnapshot = list?.getSnapshot
-        if (typeof getSnapshot !== 'function') return undefined
-        const current = getSnapshot().current
-        return typeof current === 'string' ? current : undefined
-      } catch {
-        return undefined
-      }
+      pageCheckLine(health, probe, t))
     }
 
     /**
@@ -1131,15 +1079,12 @@ window.__ModuleLoader__.load({
      * @returns the page element.
      */
     function ScopeSection(props) {
-      const { t, load, create, update, toggle, remove, probe, verify, callTool } = props
+      const { t, load, create, update, toggle, remove, probe, verify } = props
       const [state, setState] = useState(undefined)
       const [failure, setFailure] = useState('')
       const [form, setForm] = useState(undefined)
       const [pending, setPending] = useState('')
       const [probes, setProbes] = useState({})
-      const [trial, setTrial] = useState(undefined)
-      const [trialResult, setTrialResult] = useState(undefined)
-      const [trialBusy, setTrialBusy] = useState(false)
       const [query, setQuery] = useState('')
       const [scopeFilter, setScopeFilter] = useState('global')
 
@@ -1217,23 +1162,6 @@ window.__ModuleLoader__.load({
             ...current,
             [serverName]: { reachable: false, detail: error instanceof Error ? error.message : String(error) },
           }))
-        }
-      }
-
-      const openTrial = (server) => {
-        setTrialResult(undefined)
-        setTrial({ serverName: server.serverName, toolName: (server.tools ?? [])[0] ?? '', args: '{}' })
-      }
-
-      const runTrial = async () => {
-        setTrialBusy(true)
-        setTrialResult(undefined)
-        try {
-          setTrialResult(await callTool(trial.serverName, trial.toolName, trial.args))
-        } catch (error) {
-          setTrialResult({ isError: true, resultJson: error instanceof Error ? error.message : String(error) })
-        } finally {
-          setTrialBusy(false)
         }
       }
 
@@ -1337,17 +1265,10 @@ window.__ModuleLoader__.load({
               titleOf,
               probe: probes[server.serverName],
               pending: pending === server.serverName,
-              trial: trial?.serverName === server.serverName ? trial : undefined,
-              trialResult: trial?.serverName === server.serverName ? trialResult : undefined,
-              trialBusy,
               handlers: {
                 onEdit: () => setForm(server),
                 onToggle: () => { void run(() => toggle(server.serverName, !server.enabled)) },
                 onProbe: () => { void runProbe(server.serverName) },
-                onTrial: () => openTrial(server),
-                onTrialChange: (next) => setTrial(next),
-                onTrialRun: () => runTrial(),
-                onTrialClose: () => { setTrial(undefined); setTrialResult(undefined) },
                 onRemove: () => {
                   if (pending !== server.serverName) {
                     setPending(server.serverName)
@@ -1413,7 +1334,6 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-mcp-scope: dictionaries')
       ctx.effect(() => followServerCommands(ctx), 'dsh-mcp-scope: follow server commands')
       const t = ctx.locale.bind(NS)
-      const sessionId = () => currentSessionId(ctx.get('sessions'))
       const injected = () => ({
         load: () => request('GET', '/state'),
         create: server => request('POST', '/servers/create', { server }),
@@ -1422,8 +1342,6 @@ window.__ModuleLoader__.load({
         remove: serverName => request('POST', '/servers/delete', { serverName }),
         probe: serverName => request('POST', '/servers/probe', { serverName }),
         verify: serverNames => request('POST', '/servers/verify', { serverNames }),
-        callTool: (serverName, toolName, argumentsJson) =>
-          request('POST', '/servers/call', { serverName, toolName, argumentsJson, sessionId: sessionId() }),
       })
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
