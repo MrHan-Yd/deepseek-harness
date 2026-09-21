@@ -1,0 +1,11 @@
+# dsh-system-stats bundle patch: mount the machine readout under the composer.
+# An id-targeted override in the profile's cordis.patch.yml replaces the whole
+# config row, so restate every key when overriding.
+- insert:
+    - id: system-stats
+      name: dsh-system-stats
+      config:
+        # Shortest gap between two samples, in milliseconds (500..60000, default
+        # 3000). It is both the Host's sampling floor and the cadence the page
+        # polls at, so the browser never asks faster than the machine is read.
+        # intervalMs: 3000

@@ -126,7 +126,9 @@
     "@deepseek-ai/dsh-client-ui-sidebar-terminal": "workspace:^",
     "@deepseek-ai/dsh-office-to-pdf": "workspace:^",
     "dsh-agent-scope": "workspace:^",
+    "dsh-git-tools": "workspace:^",
     "dsh-mcp-scope": "workspace:^",
+    "dsh-system-stats": "workspace:^",
     "dsh-usage-stats": "workspace:^"
   },
   "peerDependencies": {

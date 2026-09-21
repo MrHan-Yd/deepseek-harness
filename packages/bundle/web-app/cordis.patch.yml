@@ -517,12 +517,12 @@
 
 # ── this fork's own plugins ─────────────────────────────────────────────────
 #
-# The three plain-JavaScript bundles committed under `plugins/` are part of the
-# default web composition: they are workspace packages, so a profile boot links
-# them through the computed resolution generation, and mounting their rows here
-# is what puts their Settings pages (MCP servers, sub-agents, usage statistics)
-# on every profile built on this bundle — web and desktop alike — with no
-# per-machine `dsh plugin add`.
+# The plain-JavaScript bundles committed under `plugins/` are part of the default
+# web composition: they are workspace packages, so a profile boot links them
+# through the computed resolution generation, and mounting their rows here is
+# what puts their surfaces (MCP servers, sub-agents, usage statistics, the
+# composer's machine readout, the floating git panel) on every profile built on
+# this bundle — web and desktop alike — with no per-machine `dsh plugin add`.
 #
 # Each host half is inert on a Harness home with no stores, and each client half
 # waits on the `settings.section` declaration before contributing its page, so
@@ -536,3 +536,7 @@
       name: dsh-agent-scope
     - id: usage-stats
       name: dsh-usage-stats
+    - id: system-stats
+      name: dsh-system-stats
+    - id: git-tools
+      name: dsh-git-tools

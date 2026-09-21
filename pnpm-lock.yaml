@@ -2307,9 +2307,15 @@ importers:
       dsh-agent-scope:
         specifier: workspace:^
         version: link:../../../plugins/dsh-agent-scope
+      dsh-git-tools:
+        specifier: workspace:^
+        version: link:../../../plugins/dsh-git-tools
       dsh-mcp-scope:
         specifier: workspace:^
         version: link:../../../plugins/dsh-mcp-scope
+      dsh-system-stats:
+        specifier: workspace:^
+        version: link:../../../plugins/dsh-system-stats
       dsh-usage-stats:
         specifier: workspace:^
         version: link:../../../plugins/dsh-usage-stats
@@ -12426,6 +12432,8 @@ importers:
   plugins/dsh-git-tools: {}
 
   plugins/dsh-mcp-scope: {}
+
+  plugins/dsh-system-stats: {}
 
   plugins/dsh-usage-stats: {}
 
