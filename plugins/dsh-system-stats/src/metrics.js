@@ -5,9 +5,10 @@
  * cumulative counters: busy CPU time over elapsed CPU time, memory in use at
  * one instant, bytes moved between two readings of an interface counter. The
  * platform-specific part — turning the text of `vm_stat`, `/proc/meminfo`,
- * `/proc/net/dev`, or `netstat -ibn` into counters — and every operation on
- * those counters live here, so the arithmetic is testable without a machine
- * reading and the Host half only owns when a reading is taken.
+ * `/proc/net/dev`, `netstat -ibn`, `netstat -e`, or the PowerShell adapter line
+ * into counters — and every operation on those counters live here, so the
+ * arithmetic is testable without a machine reading and the Host half only owns
+ * when a reading is taken.
  *
  * A difference that cannot be formed is answered with `null`: no predecessor, a
  * window of zero length, a counter that moved backwards because the interface
@@ -220,4 +221,66 @@ export function parseNetstatDarwin(text) {
     if (Number.isFinite(sent)) sentBytes += sent
   }
   return { receivedBytes, sentBytes }
+}
+
+/**
+ * Read one cumulative byte counter from a report field.
+ * @param value - a parsed report field.
+ * @returns whether the field is a whole, non-negative count.
+ */
+const isByteCount = value => Number.isInteger(value) && value >= 0
+
+/**
+ * Read the byte totals of one Windows `Get-NetAdapterStatistics` sum.
+ *
+ * The reader sums the adapters in PowerShell and prints the two totals, one
+ * line holding received then sent bytes, so there are no rows to identify here.
+ *
+ * Those are NDIS adapter counters, which is what makes this report the
+ * preferred Windows source: they exclude the loopback interface and cover both
+ * address families, so a Host reading its own page does not move them.
+ *
+ * @param text - the command's standard output.
+ * @returns received and sent bytes, or null when the report carries no total.
+ */
+export function parseAdapterStatistics(text) {
+  for (const line of text.split('\n')) {
+    const fields = line.trim().split(/\s+/)
+    if (fields.length !== 2) continue
+    const receivedBytes = Number(fields[0])
+    const sentBytes = Number(fields[1])
+    if (!isByteCount(receivedBytes) || !isByteCount(sentBytes)) continue
+    return { receivedBytes, sentBytes }
+  }
+  return null
+}
+
+/**
+ * Read the byte totals of one Windows `netstat -e` report.
+ *
+ * The first counter row of that report carries the machine's interface totals;
+ * the rows under it count packets, discards, and errors. The row's label is
+ * localized, so the total is identified by the two counters that follow its
+ * first field rather than by its name — the interface total is the first row
+ * `netstat` prints in that form.
+ *
+ * These are the IP statistics counters: they cover every interface at once,
+ * loopback included, so a machine talking to its own server moves them. That is
+ * why this report is the Windows fallback rather than the preferred source, and
+ * why it is taken only when PowerShell could not answer at all.
+ *
+ * @param text - the command's standard output.
+ * @returns received and sent bytes, or null when the report carries no
+ * interface total.
+ */
+export function parseNetstatWindows(text) {
+  for (const line of text.split('\n')) {
+    const fields = line.trim().split(/\s+/)
+    if (fields.length !== 3) continue
+    const receivedBytes = Number(fields[1])
+    const sentBytes = Number(fields[2])
+    if (!isByteCount(receivedBytes) || !isByteCount(sentBytes)) continue
+    return { receivedBytes, sentBytes }
+  }
+  return null
 }

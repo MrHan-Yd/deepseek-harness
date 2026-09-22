@@ -16,8 +16,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
-  availableBytesOfVmStat, cpuPercentOf, cpuSnapshot, parseNetstatDarwin, parseProcMeminfo,
-  parseProcNetDev, parseVmStat, percentOf, ratesOf,
+  availableBytesOfVmStat, cpuPercentOf, cpuSnapshot, parseAdapterStatistics, parseNetstatDarwin,
+  parseNetstatWindows, parseProcMeminfo, parseProcNetDev, parseVmStat, percentOf, ratesOf,
 } from '../src/metrics.js'
 
 /** One `vm_stat` report, as macOS prints it. */
@@ -57,6 +57,35 @@ lo0        16384 ::1/128     ::1               13014594     - 23099963041 130145
 en0        1500  <Link#4>    42:01:db:4b:a5:d7  1234567     0  8123456789   987654     0  1234567890     0
 en0        1500  192.168.1/24 192.168.1.7       1234567     -  8123456789   987654     -  1234567890     -
 utun0      1380  <Link#9>                            50     0       4096       60     0        8192     0
+`
+
+/** One Windows `netstat -e` report, whose first counter row is the machine's
+ * interface total and whose later rows repeat the same shape. */
+const NETSTAT_E = `Interface Statistics
+
+                           Received            Sent
+
+Bytes                     582222382      1834097966
+Unicast packets           129841506       105072942
+Non-unicast packets         6931338          230484
+Discards                          0               0
+Errors                            0               0
+Unknown protocols                 0
+`
+
+/** The same report from a Windows whose labels are translated, so the total is
+ * the first row carrying two counters rather than the row named `Bytes`. */
+const NETSTAT_E_LOCALIZED = `接口统计
+
+                           接收            发送
+
+字节                   582222382      1834097966
+单播数据包             129841506       105072942
+有错误                          0               0
+`
+
+/** The one line the Windows adapter reader prints: received then sent totals. */
+const ADAPTER_TOTALS = `582222382 1834097966
 `
 
 test('vm_stat parsing keeps the named page counts and the page size', () => {
@@ -111,6 +140,27 @@ test('netstat counts each interface once, whether or not its row carries an addr
 
 test('netstat ignores the header and any row that is not a link row', () => {
   assert.deepEqual(parseNetstatDarwin('Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll\n'), { receivedBytes: 0, sentBytes: 0 })
+})
+
+test('the Windows interface total is the first row carrying two counters', () => {
+  assert.deepEqual(parseNetstatWindows(NETSTAT_E), { receivedBytes: 582222382, sentBytes: 1834097966 })
+})
+
+test('a localized Windows netstat report answers the same total', () => {
+  assert.deepEqual(parseNetstatWindows(NETSTAT_E_LOCALIZED), { receivedBytes: 582222382, sentBytes: 1834097966 })
+})
+
+test('a Windows netstat report without an interface total has no reading', () => {
+  assert.equal(parseNetstatWindows('Interface Statistics\n\n                           Received            Sent\n'), null)
+})
+
+test('the Windows adapter totals read received then sent', () => {
+  assert.deepEqual(parseAdapterStatistics(ADAPTER_TOTALS), { receivedBytes: 582222382, sentBytes: 1834097966 })
+})
+
+test('adapter output that carries no total has no reading', () => {
+  assert.equal(parseAdapterStatistics(''), null)
+  assert.equal(parseAdapterStatistics('Get-NetAdapterStatistics : The term is not recognized\n'), null)
 })
 
 test('a CPU snapshot sums the accumulators node reports for one core', () => {

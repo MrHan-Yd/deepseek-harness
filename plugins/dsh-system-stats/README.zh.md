@@ -31,7 +31,7 @@ Host 取不到的读数——平台没有计数读取器、路由被拒绝——
 
 - **CPU**：两次 `node:os` `cpus()` 读数；占用比例按两者累计 CPU 时间之差计算 `1 - idle / total`。
 - **内存**：macOS 读 `vm_stat`，其 free + inactive + speculative 页可被回收，而 `os.freemem()` 会把文件缓存占满的机器报成内存将尽；Linux 读 `/proc/meminfo` 的 `MemAvailable`。其他平台、以及任何一次读取失败，都回退到 `os.freemem()`。
-- **网络**：macOS 读 `netstat -ibn`，Linux 读 `/proc/net/dev`，两者都对非回环网卡求和。排除回环，是因为一台与自身通信的机器在 `lo` 上搬运的字节数超过所有物理网卡之和。
+- **网络**：macOS 读 `netstat -ibn`，Linux 读 `/proc/net/dev`，两者都对非回环网卡求和；Windows 读 `Get-NetAdapterStatistics` 的合计，同样排除回环，且 IPv4 与 IPv6 都计入。排除回环，是因为一台与自身通信的机器在 `lo` 上搬运的字节数超过所有物理网卡之和。一个速率的两端读数来自同一个源：Windows 上第一个能给出读数的源会被保留到 Host 结束，因为两个不同计数序列之差不是速率。
 
 ## 一次读数的开销
 
@@ -41,7 +41,7 @@ Host 取不到的读数——平台没有计数读取器、路由被拒绝——
 
 ## 路由
 
-`GET /system-stats/api/metrics` 返回一份 JSON 读数：`intervalMs`、`at`、`sampledOverMs`、`cpu.percent` 与 `cpu.cores`、`memory.totalBytes` / `usedBytes` / `percent` / `source`，以及 `network.receivedBytesPerSecond` / `sentBytesPerSecond`（平台没有读取器时为 null）。
+`GET /system-stats/api/metrics` 返回一份 JSON 读数：`intervalMs`、`at`、`sampledOverMs`、`cpu.percent` 与 `cpu.cores`、`memory.totalBytes` / `usedBytes` / `percent` / `source`，以及 `network.receivedBytesPerSecond` / `sentBytesPerSecond`（平台没有读取器、或计数命令失败时为 null）。
 
 该路由先经过 `connection` 服务的 `requestRejection`——DSH 自带的 Host、Origin、Fetch-Metadata 校验以及浏览器登录令牌认证——然后要求 `x-dsh-system-stats: 1` 请求头，与 [`dsh-usage-stats`](../dsh-usage-stats/README.zh.md) 一致。缺少 `connection` 服务即拒绝，绝不放行。
 
@@ -67,7 +67,7 @@ node --test "plugins/dsh-system-stats/tests/*.test.mjs"
 
 ## 已知限制与后续工作
 
-- 这里没有 Windows 的网络读取器，因此该平台网络项不可用；内存回退到 `os.freemem()`。
+- Windows 上首选的 `Get-NetAdapterStatistics` 合计每次读数要起一个 PowerShell 进程；PowerShell 取不到数时会回退到全机的 `netstat -e` 合计，后者会把 Host 与自身页面的通信也算进去。该平台的内存回退到 `os.freemem()`。
 - 读数是整台机器的，没有按进程拆分，也没有磁盘、温度或 GPU 计数。
 - 网络数值对全部非回环网卡求和，因此 VPN 隧道的字节会与承载它的物理网卡一并计入。
 - 方框宽度取两项中较宽的一次测量值，因此出现比既往更长的速率时它会变宽；高度固定，整行的基线不会移动。

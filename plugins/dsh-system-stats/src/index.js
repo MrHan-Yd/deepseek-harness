@@ -8,12 +8,13 @@
  * moving. Nothing here is per-Session accounting, so nothing here is stored:
  * a reading answers one request and is replaced by the next.
  *
- * A reading costs one `node:os` sample plus, on macOS, `vm_stat` and
- * `netstat -ibn`. Nothing samples on a timer: the Host reads the machine only
- * when the page asks, at most once per `intervalMs`, so a closed page costs a
- * machine nothing at all. The first request after a long quiet period re-baselines
- * and measures a short sweep window instead of reporting an average over hours
- * of idling.
+ * A reading costs one `node:os` sample plus this platform's counter commands:
+ * `vm_stat` and `netstat -ibn` on macOS, `/proc/net/dev` on Linux, and a
+ * PowerShell adapter total on Windows. Nothing samples on a timer: the Host
+ * reads the machine only when the page asks, at most once per `intervalMs`, so
+ * a closed page costs a machine nothing at all. The first request after a long
+ * quiet period re-baselines and measures a short sweep window instead of
+ * reporting an average over hours of idling.
  *
  * Security has one home: the `connection` service's `requestRejection` applies
  * DSH's own Host/Origin/Fetch-Metadata fence plus browser login-token
@@ -32,8 +33,8 @@ import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { cpus, freemem, platform, totalmem } from 'node:os'
 import {
-  availableBytesOfVmStat, cpuPercentOf, cpuSnapshot, parseNetstatDarwin, parseProcMeminfo,
-  parseProcNetDev, parseVmStat, percentOf, ratesOf,
+  availableBytesOfVmStat, cpuPercentOf, cpuSnapshot, parseAdapterStatistics, parseNetstatDarwin,
+  parseNetstatWindows, parseProcMeminfo, parseProcNetDev, parseVmStat, percentOf, ratesOf,
 } from './metrics.js'
 
 export const name = 'system-stats'
@@ -64,6 +65,25 @@ const COMMAND_TIMEOUT_MS = 2000
 
 /** Output cap for one counter-reading command, in bytes. */
 const COMMAND_OUTPUT_MAX_BYTES = 1024 * 1024
+
+/**
+ * PowerShell invocation that prints this machine's adapter byte totals,
+ * received then sent, as whole bytes.
+ *
+ * `Get-NetAdapterStatistics` reads the NDIS counters of every adapter, so these
+ * totals exclude loopback and cover both address families. A machine whose
+ * PowerShell reports no adapter at all exits non-zero instead of printing
+ * zeros, which leaves `netstat -e` as the reader's fallback rather than
+ * answering a total of nothing.
+ */
+const ADAPTER_COUNTERS = [
+  '-NoProfile',
+  '-NonInteractive',
+  '-Command',
+  '$n = @(Get-NetAdapterStatistics); if ($n.Count -eq 0) { exit 1 };'
+    + " '{0} {1}' -f [int64](($n | Measure-Object ReceivedBytes -Sum).Sum),"
+    + ' [int64](($n | Measure-Object SentBytes -Sum).Sum)',
+]
 
 /**
  * Resolve the configured sampling gap, refusing a value the page could not
@@ -100,9 +120,18 @@ function delay(ms) {
  */
 function run(command, args) {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_OUTPUT_MAX_BYTES }, (error, stdout) => {
-      resolve(error === null ? stdout : null)
-    })
+    try {
+      execFile(command, args, { timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_OUTPUT_MAX_BYTES }, (error, stdout) => {
+        resolve(error === null ? stdout : null)
+      })
+    } catch {
+      // A refused spawn (a policy that denies this executable, an interpreter
+      // that is not installed) throws synchronously rather than reporting
+      // through the callback. It is a failed read like any other: the caller
+      // has a fallback for one, and letting it throw would fail the whole
+      // request instead of the one reading.
+      resolve(null)
+    }
   })
 }
 
@@ -153,22 +182,57 @@ async function readMemory(osPlatform) {
 }
 
 /**
- * Read the byte counters of this machine's interfaces.
+ * Create the reader for this machine's cumulative interface byte counters.
+ *
+ * macOS and Linux answer from one counter source each. Windows has two: the
+ * preferred `Get-NetAdapterStatistics` total, which excludes loopback, and the
+ * `netstat -e` total, which does not but needs no PowerShell. A difference may
+ * only be formed between two readings of the same series, so the source is
+ * fixed by the first read that answers and kept for the life of the sampler: a
+ * source that fails afterwards answers `null`, never a reading the other one
+ * took. The preference is re-probed only while no source has answered yet, so a
+ * machine that cannot run PowerShell at all still reports its traffic.
  *
  * @param osPlatform - `node:os` platform name.
- * @returns received and sent bytes over the non-loopback interfaces, or null on
- * a platform with no reader here.
+ * @returns a reader answering the current counters, or null when this platform
+ * has no reader or its counter source failed.
  */
-async function readNetwork(osPlatform) {
+function createNetworkReader(osPlatform) {
   if (osPlatform === 'linux') {
-    const text = readText('/proc/net/dev')
-    return text === null ? null : parseProcNetDev(text)
+    return async () => {
+      const text = readText('/proc/net/dev')
+      return text === null ? null : parseProcNetDev(text)
+    }
   }
   if (osPlatform === 'darwin') {
-    const text = await run('netstat', ['-ibn'])
-    return text === null ? null : parseNetstatDarwin(text)
+    return async () => {
+      const text = await run('netstat', ['-ibn'])
+      return text === null ? null : parseNetstatDarwin(text)
+    }
   }
-  return null
+  if (osPlatform !== 'win32') return async () => null
+  const sources = [
+    async () => {
+      const text = await run('powershell', ADAPTER_COUNTERS)
+      return text === null ? null : parseAdapterStatistics(text)
+    },
+    async () => {
+      const text = await run('netstat', ['-e'])
+      return text === null ? null : parseNetstatWindows(text)
+    },
+  ]
+  let fixed = null
+  return async () => {
+    if (fixed !== null) return fixed()
+    for (const source of sources) {
+      const reading = await source()
+      if (reading !== null) {
+        fixed = source
+        return reading
+      }
+    }
+    return null
+  }
 }
 
 /**
@@ -196,13 +260,14 @@ function memoryOf(reading) {
  */
 function createSampler() {
   const osPlatform = platform()
+  const readNetwork = createNetworkReader(osPlatform)
   let previous = null
 
   const take = async () => {
     const at = Date.now()
     const cpu = cpuSnapshot(cpus())
     const memory = await readMemory(osPlatform)
-    const network = await readNetwork(osPlatform)
+    const network = await readNetwork()
     return { at, cpu, memory, network }
   }
 

@@ -31,7 +31,7 @@ A reading the Host cannot take — a platform with no counter reader, a refused 
 
 - **CPU**: two `node:os` `cpus()` readings; the busy share is `1 - idle / total` over the elapsed CPU time of both.
 - **Memory**: on macOS `vm_stat`, whose free + inactive + speculative pages are reclaimable while `os.freemem()` would report a machine with a full file cache as nearly out of memory; on Linux `/proc/meminfo`'s `MemAvailable`. Every other platform, and any failed read, falls back to `os.freemem()`.
-- **Network**: on macOS `netstat -ibn`, on Linux `/proc/net/dev`, both summed over non-loopback interfaces. Loopback is excluded because a machine talking to itself moves more bytes over `lo` than over every physical interface together.
+- **Network**: on macOS `netstat -ibn`, on Linux `/proc/net/dev`, both summed over non-loopback interfaces; on Windows the `Get-NetAdapterStatistics` totals, which exclude loopback as well and cover both address families. Loopback is excluded because a machine talking to itself moves more bytes over `lo` than over every physical interface together. The two readings of a rate come from one source: the first Windows source that answers is kept for the life of the Host, because a difference between two counter series is not a rate.
 
 ## What a reading costs
 
@@ -41,7 +41,7 @@ The first request after a quiet period has no recent predecessor to subtract, so
 
 ## Route
 
-`GET /system-stats/api/metrics` answers one JSON reading: `intervalMs`, `at`, `sampledOverMs`, `cpu.percent` and `cpu.cores`, `memory.totalBytes` / `usedBytes` / `percent` / `source`, and `network.receivedBytesPerSecond` / `sentBytesPerSecond` (null where the platform has no reader).
+`GET /system-stats/api/metrics` answers one JSON reading: `intervalMs`, `at`, `sampledOverMs`, `cpu.percent` and `cpu.cores`, `memory.totalBytes` / `usedBytes` / `percent` / `source`, and `network.receivedBytesPerSecond` / `sentBytesPerSecond` (null where the platform has no reader, or where its counter command failed).
 
 The route goes through the `connection` service's `requestRejection` first — DSH's own Host, Origin, and Fetch-Metadata fence plus browser login-token authentication — and then requires the `x-dsh-system-stats: 1` header, exactly as [`dsh-usage-stats`](../dsh-usage-stats/README.md) does. A missing `connection` service is a refusal, never a pass.
 
@@ -67,7 +67,7 @@ node --test "plugins/dsh-system-stats/tests/*.test.mjs"
 
 ## Known Limitations and Deferred Work
 
-- Windows has no network reader here, so the network entry is unavailable there; memory falls back to `os.freemem()`.
+- On Windows the preferred `Get-NetAdapterStatistics` total costs one PowerShell process per reading; a Host whose PowerShell cannot answer falls back to the whole-machine `netstat -e` total, which does include a Host talking to its own page. Memory falls back to `os.freemem()` there.
 - The readings are the whole machine's. There is no per-process breakdown, and no disk, temperature, or GPU counter.
 - The network figure sums every non-loopback interface, so a VPN tunnel's bytes are counted beside the physical interface carrying them.
 - The pill's box is the wider entry's measured width, so a rate longer than anything measured before widens it; the height is fixed, so the row's line never moves.
