@@ -78,6 +78,22 @@ describe('desktop package-set selection', () => {
     ])
   })
 
+  it('requires the fork plugins the web-app bundle mounts to be packed', () => {
+    const closure = (pluginPacked: boolean): Map<string, PackedDesktopPackage> => new Map<string, PackedDesktopPackage>([
+      ['@deepseek-ai/dsh', packed('@deepseek-ai/dsh', {
+        dependencies: { '@deepseek-ai/dsh-web-app': '^1.0.0' },
+      })],
+      ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
+      ['@deepseek-ai/dsh-web-app', packed('@deepseek-ai/dsh-web-app', {
+        dependencies: { 'dsh-agent-scope': '^0.1.0' },
+      })],
+      ...pluginPacked ? [['dsh-agent-scope', packed('dsh-agent-scope')] as const] : [],
+    ])
+    expect(selectDesktopPackageClosure(closure(true)).map(entry => entry.manifest.name))
+      .toEqual(expect.arrayContaining(['@deepseek-ai/dsh-web-app', 'dsh-agent-scope']))
+    expect(() => selectDesktopPackageClosure(closure(false))).toThrow(/unpacked package dsh-agent-scope/u)
+  })
+
   it('requires the Desktop Host entry', () => {
     const files = [
       'package/lib/index.js',
