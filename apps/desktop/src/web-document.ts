@@ -12,7 +12,7 @@ const BOOT = '<script>globalThis.__DSH_BOOT_READY__ = Promise.withResolvers()</s
 /**
  * Read an application-owned static asset; the index waits for asynchronous Host injections.
  * @param request - Local application request.
- * @param root - Packaged Web dist directory.
+ * @param root - Static directory owned by this application: the packaged Web dist or the shell renderer directory.
  * @returns Static response, or a missing/invalid path response.
  */
 export async function serveWebDocument(request: Request, root: string): Promise<Response> {

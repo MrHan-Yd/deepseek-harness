@@ -19,7 +19,7 @@ describe('installer preparation preserves application dependencies', () => {
       DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://harness-test.deepseek.com',
     }, platform, 'x64')).toThrow('DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN')
   })
-  it.each(['win32', 'darwin'] as const)('keeps electron-builder responsible for node_modules on %s', async (platform) => {
+  it.each(['win32', 'darwin'] as const)('keeps electron-builder responsible for node_modules and packages the shell documents on %s', async (platform) => {
     execute.mockClear()
     const env = {
       DSH_DESKTOP_APP_ID: 'com.example.installer',
@@ -36,6 +36,8 @@ describe('installer preparation preserves application dependencies', () => {
     try {
       const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
       const config = createElectronBuilderConfig(env, platform, 'x64')
+      // The protocol serves the shell dialogs from this directory inside the package.
+      expect(config.files).toContain('renderer/**/*')
       const aboutIcon = config.extraResources.find(resource => resource.to === 'icon.png')
       expect(aboutIcon).toBeDefined()
       expect(readFileSync(aboutIcon!.from)).toEqual(readFileSync(new URL('../resources/icon-windows.png', import.meta.url)))

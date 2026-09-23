@@ -14,6 +14,7 @@ const fixture = await vi.hoisted(async () => {
       setWindowOpenHandler: vi.fn(),
       insertCSS: vi.fn(async () => 'blur'),
       removeInsertedCSS: vi.fn(async () => {}),
+      executeJavaScript: vi.fn(async () => true),
     })
     readonly show = vi.fn()
     readonly setBounds = vi.fn()
@@ -107,6 +108,17 @@ it('cancels on abort, renderer failure, disposal, or an already-closed parent', 
   expect(fixture.windows).toHaveLength(count)
   f.parent.destroy()
   expect((await f.show()).response).toBe(1)
+})
+
+it('cancels when the committed document carries none of this dialog', async () => {
+  const f = setup()
+  const pending = f.show()
+  const window = fixture.windows.at(-1)!
+  window.webContents.executeJavaScript.mockResolvedValueOnce(false)
+  expect((await pending).response).toBe(1)
+  expect(window.webContents.executeJavaScript).toHaveBeenCalledWith('document.getElementById("dialog") !== null')
+  expect(window.isDestroyed()).toBe(true)
+  expect(f.parent.webContents.removeInsertedCSS).toHaveBeenCalledOnce()
 })
 
 it('denies navigation away from the owned document', async () => {

@@ -46,6 +46,7 @@ const harness = await vi.hoisted(async () => {
   const updateDownload = vi.fn(async (_version: string): Promise<DesktopUpdateState> => updateState)
   const updateInstall = vi.fn(async (_version: string): Promise<DesktopUpdateState> => updateState)
   const popup = vi.fn<(options: { window: FakeWindow; x?: number; y?: number; callback?: () => void }) => void>()
+  const protocolHandle = vi.fn<(scheme: string, handler: (request: Request) => Response | Promise<Response>) => void>()
   const menuBuilder = vi.fn<(template: MenuItemConstructorOptions[]) => { popup: typeof popup }>(() => ({ popup }))
   const menu = Object.assign(menuBuilder, { buildFromTemplate: menuBuilder, setApplicationMenu: vi.fn() })
   class FakeWindow extends EventEmitter {
@@ -135,7 +136,7 @@ const harness = await vi.hoisted(async () => {
   return {
     failWindow(error: Error) { windowFailure = error },
     windows, hosts, handlers, app, FakeWindow, FakeHost, powerMonitor,
-    menu, popup, socketHeaders: vi.fn(), updateCheck, updateDownload, updateInstall,
+    menu, popup, protocolHandle, socketHeaders: vi.fn(), updateCheck, updateDownload, updateInstall,
     ipcOn: vi.fn<(channel: string, listener: (event: { sender: unknown; senderFrame: unknown }, ...args: unknown[]) => void) => void>(),
     get updateState() { return updateState },
     set updateState(value: DesktopUpdateState) { updateState = value },
@@ -207,7 +208,7 @@ vi.mock('electron', () => ({
   },
   Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu },
   session: { defaultSession: { webRequest: { onBeforeSendHeaders: harness.socketHeaders } } },
-  protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
+  protocol: { registerSchemesAsPrivileged: vi.fn(), handle: harness.protocolHandle },
   powerMonitor: harness.powerMonitor,
 }))
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -307,6 +308,20 @@ afterEach(async () => {
 })
 
 describe('desktop main startup', () => {
+  it('serves the shell dialog documents from the packaged renderer directory', async () => {
+    const { serveWebDocument } = await import('../src/web-document.ts')
+    const serve = vi.mocked(serveWebDocument)
+    serve.mockResolvedValueOnce(new Response('dialog'))
+    await readyForUpdate()
+    const handler = harness.protocolHandle.mock.calls[0]![1]
+    const shell = new Request('dsh-app://shell/update-dialog.html')
+    expect(await handler(shell)).toBeInstanceOf(Response)
+    expect(serve).toHaveBeenCalledWith(shell, join('desktop-test-app', 'renderer'))
+    serve.mockClear()
+    expect((await handler(new Request('dsh-app://other/update-dialog.html'))).status).toBe(404)
+    expect(serve).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['darwin', true, 'en-US'],
     ['darwin', false, 'zh-CN'],

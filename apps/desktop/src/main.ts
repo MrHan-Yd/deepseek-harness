@@ -407,6 +407,9 @@ async function main(): Promise<void> {
       }
       return forwardWebRequest(request, hostUrl, hostCookie)
     }
+    // Shell-owned dialog documents are static files under the application's
+    // renderer directory; only the product document uses the `app` host.
+    if (url.hostname === 'shell') return serveWebDocument(request, join(app.getAppPath(), 'renderer'))
     return Promise.resolve(new Response(null, { status: 404 }))
   })
 

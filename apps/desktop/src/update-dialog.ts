@@ -32,6 +32,22 @@ export interface UpdateDialogApi {
 
 const page = 'dsh-app://shell/update-dialog.html'
 
+/**
+ * @param window - Overlay whose committed document must be this dialog's own page.
+ * @returns Whether that document carries the dialog content; a probe that cannot run reports and returns false.
+ */
+function renderedDialog(window: BrowserWindow): Promise<boolean> {
+  return Promise.resolve()
+    .then(() => window.webContents.executeJavaScript('document.getElementById("dialog") !== null'))
+    .then(rendered => rendered === true)
+    .catch((error: unknown) => {
+      // A failed probe is not proof of a rendered dialog, and the cancellation it
+      // causes must not hide a packaging or routing defect.
+      console.error('desktop update: could not verify the dialog document', error)
+      return false
+    })
+}
+
 /** One replaceable confirmation window; aborted checks and mandatory policy cancel ordinary prompts. */
 export class DesktopUpdateDialog {
   private disposed = false
@@ -86,7 +102,13 @@ export class DesktopUpdateDialog {
       window.once('closed', abort)
       window.webContents.on('will-navigate', (event, url) => { if (url !== page) event.preventDefault() })
       window.webContents.once('render-process-gone', abort)
-      void window.loadURL(page).catch(abort)
+      void window.loadURL(page).then(async () => {
+        if (window.isDestroyed()) return
+        // A document that committed without this dialog's content cannot be
+        // answered; canceling releases the parent's blur and modal block.
+        if (await renderedDialog(window)) return
+        abort()
+      }, abort)
     })
   }
 
