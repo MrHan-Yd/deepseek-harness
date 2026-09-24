@@ -128,7 +128,15 @@ function messageSystem(locale) {
 /**
  * Run one git command in one directory.
  *
- * `sandboxPolicy` is deliberately not set: the executor applies the deployment's
+ * A read passes `readOnly`: it asks for the `read-only` sandbox policy and
+ * turns off git's optional index refresh. That policy is the one confined mode
+ * whose backend needs no directory grant — the Windows ACL runner only edits an
+ * ACL for `workspace-write` — so the page's reads work on every workspace,
+ * including one whose ACL omits the owner's `WRITE_OWNER`. Without
+ * `GIT_OPTIONAL_LOCKS=0` the read would try to write `.git/index` and be
+ * refused by the same policy that makes it portable.
+ *
+ * A write leaves `sandboxPolicy` unset: the executor applies the deployment's
  * own mode, which is what makes a `read-only` setting mean what it says here
  * too. A denial therefore comes back as a failure with git's or the sandbox's
  * own words, not as a silently different outcome.
@@ -138,16 +146,24 @@ function messageSystem(locale) {
  * @param args - the arguments, already validated by this module's helpers.
  * @param limit - characters of output this read keeps; a read whose output is
  * summed rather than shown passes {@link GIT_STATE_TEXT_LIMIT}.
+ * @param readOnly - whether the command only reads the repository.
  * @returns the outcome the page reports.
  */
-async function runGit(ctx, cwd, args, limit = GIT_TEXT_LIMIT) {
-  const spec = ctx.shell.resolve({
+async function runGit(ctx, cwd, args, limit = GIT_TEXT_LIMIT, readOnly = false) {
+  const request = {
     command: `git ${args.join(' ')}`,
     workdir: cwd,
     timeoutMs: GIT_TIMEOUT_MS,
     stdoutMaxBytes: GIT_STDOUT_MAX_BYTES,
-  })
-  const result = await ctx.shell.run(spec)
+  }
+  if (readOnly) {
+    request.env = { GIT_OPTIONAL_LOCKS: '0' }
+    const policy = readOnlyPolicy(ctx)
+    if (policy !== undefined) request.sandboxPolicy = policy
+  }
+  const spec = ctx.shell.resolve(request)
+  const execution = await ctx.shell.execute(spec)
+  const result = await execution.result()
   return {
     exitCode: result.exitCode,
     timedOut: result.timedOut === true,
@@ -155,6 +171,35 @@ async function runGit(ctx, cwd, args, limit = GIT_TEXT_LIMIT) {
     stdout: capText(result.stdout?.text, GIT_TEXT_LIMIT),
     stderr: capText(result.stderr?.text, GIT_TEXT_LIMIT),
   }
+}
+
+/**
+ * Run one git query that does not write to the repository.
+ * @param ctx - plugin context carrying `shell`.
+ * @param cwd - the workspace directory to run in.
+ * @param args - the arguments, already validated by this module's helpers.
+ * @param limit - characters of output this read keeps.
+ * @returns the outcome the page reports.
+ */
+function runGitRead(ctx, cwd, args, limit = GIT_TEXT_LIMIT) {
+  return runGit(ctx, cwd, args, limit, true)
+}
+
+/**
+ * The deployment's read-only policy, or `undefined` where no policy service is
+ * mounted. A deployment that mounts one still owns the workspace root and the
+ * session identity, so the mode is the only field this plugin chooses.
+ * @param ctx - plugin context.
+ * @returns the resolved read-only policy, when the deployment supplies policies.
+ */
+function readOnlyPolicy(ctx) {
+  let policy
+  try {
+    policy = ctx.get('sandboxPolicy')?.resolve({ mode: 'read-only' })
+  } catch {
+    policy = undefined
+  }
+  return policy
 }
 
 /**
@@ -246,7 +291,7 @@ function countUntrackedLines(cwd, paths) {
  * @returns the state the panel renders.
  */
 async function readState(ctx, cwd) {
-  const inside = await runGit(ctx, cwd, ['rev-parse', '--is-inside-work-tree'])
+  const inside = await runGitRead(ctx, cwd, ['rev-parse', '--is-inside-work-tree'])
   if (inside.exitCode !== 0) {
     return {
       cwd, repo: false, branch: null, branches: [], changedFiles: 0, insertions: 0, deletions: 0,
@@ -257,14 +302,14 @@ async function readState(ctx, cwd) {
     // `git branch`, not `for-each-ref --format=%(...)`: the executor runs the
     // command through a shell, and a format string carrying `%` and parentheses
     // is shell syntax there. A branch name is all this read needs.
-    runGit(ctx, cwd, ['branch', '--no-color']),
+    runGitRead(ctx, cwd, ['branch', '--no-color']),
     // `-uall` because the default collapses an untracked directory into one
     // record: that record names a directory, not a file to open and count, and
     // its lines would be lost. `-z` keeps a non-ASCII path unquoted, which is
     // what makes it a path the count below can open.
-    runGit(ctx, cwd, ['status', '--porcelain=v2', '--branch', '-z', '-uall'], GIT_STATE_TEXT_LIMIT),
+    runGitRead(ctx, cwd, ['status', '--porcelain=v2', '--branch', '-z', '-uall'], GIT_STATE_TEXT_LIMIT),
     // Against HEAD, so a staged change and an unstaged one each count once.
-    runGit(ctx, cwd, ['diff', '--numstat', 'HEAD'], GIT_STATE_TEXT_LIMIT),
+    runGitRead(ctx, cwd, ['diff', '--numstat', 'HEAD'], GIT_STATE_TEXT_LIMIT),
   ])
   // A repository with no commits yet has no HEAD to diff against, and no
   // tracked change to report either; its new files are counted as untracked.
@@ -390,10 +435,10 @@ async function generateMessage(ctx, request) {
   const target = modelTarget(ctx, agent)
   const stageAll = request?.stageAll === true
   const [head, status, diff] = await Promise.all([
-    runGit(ctx, cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
-    runGit(ctx, cwd, ['status', '--porcelain']),
+    runGitRead(ctx, cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    runGitRead(ctx, cwd, ['status', '--porcelain']),
     // The same range the commit will use: everything, or the index alone.
-    runGit(ctx, cwd, stageAll ? ['diff', 'HEAD'] : ['diff', '--cached']),
+    runGitRead(ctx, cwd, stageAll ? ['diff', 'HEAD'] : ['diff', '--cached']),
   ])
   const prompt = [
     `Branch: ${parseBranch(head.stdout) ?? '(unborn)'}`,

@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
     // opens, and its trash is the same icon the Models page deletes a model
     // with. The module table seeds the package for dynamic bundles, so no build
     // step or manifest entry is needed to reach it.
-    const { IconChevronDownOutline14, IconTrashOutline16, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { IconChevronDownOutlineRegular, IconTrashOutlineRegular, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useState } = React
@@ -342,7 +342,7 @@ window.__ModuleLoader__.load({
             : h('span', { style: { display: 'flex', opacity: 0.7, flexShrink: 0 } }, props.icon),
           h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
             selected === undefined ? props.placeholder ?? '' : selected.label),
-          h('span', { style: { display: 'flex', flexShrink: 0 } }, h(IconChevronDownOutline14))),
+          h('span', { style: { display: 'flex', flexShrink: 0 } }, h(IconChevronDownOutlineRegular))),
       })
       // `Menu` wraps its anchor in an inline-flex pill, so a block-level
       // dropdown stretches that wrapper through a column flex container
@@ -978,7 +978,7 @@ window.__ModuleLoader__.load({
             : (hovered ? 'color-mix(in srgb, currentColor 10%, transparent)' : 'transparent'),
           transition: 'background 120ms ease',
         },
-      }, h(IconTrashOutline16, { size: 14 }), pending ? h('span', { style: { fontSize: 12 } }, label) : null)
+      }, h(IconTrashOutlineRegular, { size: 14 }), pending ? h('span', { style: { fontSize: 12 } }, label) : null)
     }
 
     /**

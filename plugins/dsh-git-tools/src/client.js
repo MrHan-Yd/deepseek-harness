@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
     const React = require('react')
-    const { IconChevronDownOutline14, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { IconChevronDownOutlineRegular, Menu } = require('@deepseek-ai/dsh-client-ui-primitives')
     const { defineStore } = require('@deepseek-ai/dsh-client-store')
 
     const h = React.createElement
@@ -540,7 +540,7 @@ window.__ModuleLoader__.load({
         },
           h('span', { style: { display: 'flex', opacity: 0.7 } }, h(BranchGlyph, { size: 14 })),
           branch ?? t('branch'),
-          h('span', { style: { display: 'flex', opacity: 0.6 } }, h(IconChevronDownOutline14))),
+          h('span', { style: { display: 'flex', opacity: 0.6 } }, h(IconChevronDownOutlineRegular))),
         h('div', { style: { flex: 1 } }),
         h('span', { style: { display: 'inline-flex', gap: 6, fontVariantNumeric: 'tabular-nums' } },
           h('span', { style: { color: 'var(--dsw-alias-state-success-primary)' } }, `+${grouped(insertions)}`),
@@ -713,7 +713,7 @@ window.__ModuleLoader__.load({
             ariaLabel: t('switchBranch'),
             active: view === 'branch',
             onClick: () => { setView(current => (current === 'branch' ? 'none' : 'branch')) },
-            value: h('span', { style: { display: 'flex', opacity: 0.6 } }, h(IconChevronDownOutline14)),
+            value: h('span', { style: { display: 'flex', opacity: 0.6 } }, h(IconChevronDownOutlineRegular)),
           }),
           // 提交或推送: opens the commit box.
           row({
@@ -868,7 +868,7 @@ window.__ModuleLoader__.load({
           },
         },
         labelOf(choice),
-        h('span', { style: { display: 'flex' } }, h(IconChevronDownOutline14))),
+        h('span', { style: { display: 'flex' } }, h(IconChevronDownOutlineRegular))),
       }))
     }
 
