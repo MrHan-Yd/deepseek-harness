@@ -55,6 +55,8 @@ For an unquoted token, the browser starts the `fileReferences/list` and `session
 
 A `#` token runs the session lookup alone and never lists files. It keeps the rows the Workspace tree roots — a Session the list reports as a subagent drops out, because `@` already reaches this Session's own children through their parent — then partitions the resolver's workspace-affinity ranking, which already sorts the requesting workspace first, into the current workspace and every other one. The two groups render under locale-owned headings, and the ranking holds inside each group.
 
+Candidate requests require an existing retained Client Session and share one temporary `referenceCandidates` reference. Both discovery calls wait for that Session's initial history open to succeed; an unretained Session or failed open prevents both RPCs. The candidate request's cancellation signal covers the history wait and both calls, and the temporary reference is released when the lookup settles.
+
 ### Serialization
 
 File picks preserve the natural text defined by the shared `@path` grammar as the hidden serialized and clipboard form. Session picks use the canonical `@[label](dsh-session:…)` mention; serialization never reconstructs identity from the visible title.

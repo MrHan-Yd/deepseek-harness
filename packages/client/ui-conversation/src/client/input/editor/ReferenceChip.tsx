@@ -5,7 +5,7 @@
  */
 import clsx from 'clsx'
 import type { ReactNode } from 'react'
-import { ReferenceIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+import { ReferenceIconRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReferenceIconKind } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './ReferenceChip.module.css'
 import referenceCss from './composer-editor.module.css'
@@ -55,11 +55,11 @@ export function ReferenceChip({ label, source, appearance, invalid }: ReferenceC
       data-source={source}
       title={label}
     >
-      {appearance !== undefined
-        ? <ReferenceIcon kind={appearance} size={14} className={css.icon} />
-        : MARKERLESS_SOURCES.has(source)
+      {appearance === undefined
+        ? MARKERLESS_SOURCES.has(source)
           ? null
-          : <span className={css.marker} aria-hidden>@</span>}
+          : <span className={css.marker} aria-hidden>@</span>
+        : <ReferenceIconRegular kind={appearance} size={14} className={css.icon} />}
       <span className={css.label}>{label}</span>
     </span>
   )
