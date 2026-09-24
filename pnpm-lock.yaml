@@ -2313,9 +2313,6 @@ importers:
       dsh-mcp-scope:
         specifier: workspace:^
         version: link:../../../plugins/dsh-mcp-scope
-      dsh-system-stats:
-        specifier: workspace:^
-        version: link:../../../plugins/dsh-system-stats
       dsh-usage-stats:
         specifier: workspace:^
         version: link:../../../plugins/dsh-usage-stats

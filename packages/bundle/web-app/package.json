@@ -128,7 +128,6 @@
     "dsh-agent-scope": "workspace:^",
     "dsh-git-tools": "workspace:^",
     "dsh-mcp-scope": "workspace:^",
-    "dsh-system-stats": "workspace:^",
     "dsh-usage-stats": "workspace:^"
   },
   "peerDependencies": {
