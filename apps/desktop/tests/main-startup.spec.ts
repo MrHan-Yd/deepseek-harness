@@ -55,7 +55,6 @@ const harness = await vi.hoisted(async () => {
   const updateDownload = vi.fn(async (_version: string): Promise<DesktopUpdateState> => updateState)
   const updateInstall = vi.fn(async (_version: string): Promise<DesktopUpdateState> => updateState)
   const popup = vi.fn<(options: { window: FakeWindow; x?: number; y?: number; callback?: () => void }) => void>()
-  const protocolHandle = vi.fn<(scheme: string, handler: (request: Request) => Response | Promise<Response>) => void>()
   const menuBuilder = vi.fn<(template: MenuItemConstructorOptions[]) => { popup: typeof popup }>(() => ({ popup }))
   const menu = Object.assign(menuBuilder, { buildFromTemplate: menuBuilder, setApplicationMenu: vi.fn() })
   class FakeWindow extends EventEmitter {
