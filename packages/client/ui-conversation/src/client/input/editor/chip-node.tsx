@@ -119,6 +119,7 @@ export class ReferenceChipNode extends DecoratorNode<JSX.Element> {
   override createDOM(_config: EditorConfig): HTMLElement {
     const el = document.createElement('span')
     el.setAttribute('data-composer-chip', this.__source)
+    el.setAttribute('data-source', this.__source)
     el.setAttribute('contenteditable', 'false')
     return el
   }
