@@ -511,6 +511,13 @@ export async function packageTarget(
       artifactsRoot: buildPaths.artifacts,
       environment: electronBuilderEnv,
     }, artifact => execute(desktopElectronBuilderArguments(target, false, artifact), electronBuilderEnv)), undefined, undefined, proxyEvent)
+  } else if (target.platform === 'darwin' && invocation.unsigned) {
+    // An unsigned macOS package is ad-hoc signed by electron-builder itself
+    // (electron-builder-config.mjs selects the `-` identity and turns
+    // notarization off) and carries no Apple credentials to resolve, so it is
+    // built straight into unsigned-artifacts.
+    await execute([...desktopElectronBuilderArguments(target, false), '--config.mac.notarize=false'], electronBuilderEnv)
+    await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts', '--unsigned'], targetEnv)
   } else if (target.platform === 'darwin') {
     await execute([...desktopElectronBuilderArguments(target, true), '--config.mac.notarize=false'], electronBuilderEnv)
     await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts'], targetEnv)
