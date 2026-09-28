@@ -53,6 +53,15 @@ jobs:
       - name: Install (immutable)
         run: pnpm install --frozen-lockfile
 
+      # `tsx scripts/package-target.ts` imports the macOS notarization proxy at
+      # module load, and that proxy imports the built
+      # `@deepseek-ai/node-addon-system` `lib/` output — a `tsc -b` artifact this
+      # repository does not commit. The official build that produces it runs from
+      # inside that same script, so a clean checkout fails on the import before
+      # the build can start.
+      - name: Build node-addon-system lib
+        run: pnpm --dir native/system run build:ts
+
       # Release settings are file-owned; an unsigned macOS package needs the
       # application identifier and the mandatory-update origins only.
       - name: Write packaging environment
@@ -112,6 +121,12 @@ jobs:
           } else {
             pnpm install --frozen-lockfile
           }
+
+      # Same import-before-build ordering as the macOS job: the packaging entry
+      # loads the notarization proxy, which loads the uncommitted
+      # `@deepseek-ai/node-addon-system` `lib/` output.
+      - name: Build node-addon-system lib
+        run: pnpm --dir native/system run build:ts
 
       # Release settings are file-owned; an unsigned Windows package needs the
       # application identifier and the mandatory-update origins only.
