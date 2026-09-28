@@ -16,6 +16,11 @@
     "cordis.patch.yml",
     "README.md"
   ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "^0.1.7-rc.1",
+    "@deepseek-ai/dsh-subprocess": "^0.1.7-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.1.7-rc.1"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

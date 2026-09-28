@@ -7,7 +7,10 @@
  * is what switching Sessions looks like from here. This file pins that
  * arrangement: the entry renders without any slot data, names the checkout the
  * Host resolved, names the Session on every call, and re-reads when the frame
- * switches Sessions.
+ * switches Sessions. It also pins what the entry itself decides from the two
+ * standard seats it reads: it is on the frame only while the Conversation is the
+ * selected main panel (an entry page shows no git pill), and it sits below the
+ * conversation header plus the Windows caption row the packaged app adds.
  *
  * Run from the repository root:
  *   node --test "plugins/dsh-git-tools/tests/*.test.mjs"
@@ -89,7 +92,7 @@ async function openPanel(state, options = {}) {
           onClick: () => { onSelect(item.id) },
         }, item.label)))
       : null)
-  const IconChevronDownOutline14 = () => React.createElement('svg')
+  const IconChevronDownOutlineRegular = () => React.createElement('svg')
 
   /**
    * The store engine this bundle takes from the module table, as a test double:
@@ -125,7 +128,7 @@ async function openPanel(state, options = {}) {
 
   const module = loaded.factory((spec) => {
     if (spec === 'react') return React
-    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutline14, Menu }
+    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutlineRegular, Menu }
     if (spec === '@deepseek-ai/dsh-client-store') return { defineStore }
     throw new Error(`unexpected require(${JSON.stringify(spec)})`)
   })
@@ -175,7 +178,19 @@ async function openPanel(state, options = {}) {
     React.useEffect(() => sessions.subscribe(() => { force(value => value + 1) }), [])
     return selector(sessions.getSnapshot())
   }
-  const props = { ...registration.inject(), useSessions, useStore, actions: store.actions }
+  /** The frame's selected main panel: null is the Conversation. */
+  let panelInfo = { activePanelId: options.panelId ?? null }
+  const panelListeners = new Set()
+  const panels = {
+    getSnapshot: () => panelInfo,
+    subscribe: (listener) => { panelListeners.add(listener); return () => { panelListeners.delete(listener) } },
+  }
+  const usePanelInfo = (selector) => {
+    const [, force] = React.useState(0)
+    React.useEffect(() => panels.subscribe(() => { force(value => value + 1) }), [])
+    return selector(panels.getSnapshot())
+  }
+  const props = { ...registration.inject(), useSessions, usePanelInfo, useStore, actions: store.actions }
   await act(async () => { root.render(React.createElement(registration.component, props)) })
   await flush(() => {})
 
@@ -220,6 +235,13 @@ async function openPanel(state, options = {}) {
     },
     /** Switch the frame to another Session, as picking it in the sidebar does. */
     switchTo: async (id) => { await flush(() => { sessions.show(id) }) },
+    /** Select a global main panel, as the sidebar does; `null` is the Conversation. */
+    showPanel: async (id) => {
+      await flush(() => {
+        panelInfo = { activePanelId: id }
+        for (const listener of panelListeners) listener()
+      })
+    },
     /** Type into one input the way a person does. */
     type: async (element, text) => {
       const prototype = element.tagName === 'TEXTAREA'
@@ -251,6 +273,61 @@ test('the entry renders with no slot data and names the checkout the Host resolv
   assert.ok(page.calls[0].url.startsWith('/git-tools/api/state'), 'it reads the state from its own Host API')
   assert.ok(page.calls[0].url.includes('sessionId=session-1'), 'naming the Session the frame persisted')
   assert.equal(pill.getAttribute('title').includes('D:\\ws\\repo'), true, 'so the checkout is never a surprise')
+
+  await page.close()
+})
+
+test('the pill clears the conversation header, and the Windows caption row above it', async () => {
+  const page = await openPanel({
+    cwd: 'D:\\ws\\repo', repo: true, branch: 'master', branches: ['master'], changedFiles: 1,
+  })
+
+  // The header block is 76px with its view tabs, the panel clears it by 13px,
+  // and the packaged Windows app's caption row — which the frame pads by and a
+  // fixed child is not offset by — is added from the height it publishes.
+  const anchored = page.pill().style.top
+  assert.equal(
+    anchored,
+    'calc(var(--dsh-windows-titlebar-height, 0px) + 89px)',
+    'so the pill sits below the frame chrome rather than across the header',
+  )
+  assert.equal(page.pill().style.right, '48px', 'in from the frame’s right edge')
+
+  await page.flush(() => { page.pill().click() })
+  assert.ok(page.container.children[0].textContent.includes('Git 工具'), 'the open card anchors in the same corner')
+  assert.equal(page.container.children[0].style.top, anchored, 'at the same step below the chrome')
+
+  await page.close()
+})
+
+test('the panel belongs to the Conversation and leaves the frame for an entry page', async () => {
+  const page = await openPanel({
+    cwd: 'D:\\ws\\repo', repo: true, branch: 'master', branches: ['master'], changedFiles: 1, insertions: 4, deletions: 0,
+  })
+  assert.ok(page.pill().textContent.startsWith('master'), 'the Conversation shows it, on the Session it read')
+  assert.equal(page.calls.length, 1, 'and has read that checkout once')
+
+  await page.showPanel('plugins')
+
+  assert.equal(page.pill(), null, 'an entry page shows no git pill')
+  assert.equal(page.container.textContent, '', 'and nothing else of the panel is left on the frame')
+
+  await page.showPanel(null)
+
+  assert.ok(page.pill().textContent.startsWith('master'), 'returning to the Conversation shows it again')
+  assert.equal(page.calls.length, 2, 'and reads the checkout afresh, having been away from it')
+
+  await page.close()
+})
+
+test('an entry page that is already selected renders no panel at all', async () => {
+  const page = await openPanel(
+    { cwd: 'D:\\ws\\repo', repo: true, branch: 'master', branches: ['master'] },
+    { panelId: 'plugins' },
+  )
+
+  assert.equal(page.container.textContent, '', 'the frame opens on the entry page')
+  assert.equal(page.calls.length, 0, 'and no checkout is read for it')
 
   await page.close()
 })

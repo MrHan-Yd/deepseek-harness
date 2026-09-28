@@ -8,6 +8,11 @@
  * what retains a Session (`retainedBy.mainView`), so its reference moving is
  * what switching Sessions looks like from here, and the panel follows it.
  *
+ * The panel belongs to the Conversation, not to the frame: `shell.overlay` is
+ * frame-wide, so the entry renders only while the Conversation is the selected
+ * main panel, and an entry page — the plugin manager, any global panel — shows
+ * no git pill at all.
+ *
  * Collapsed, the panel is the branch alone. Expanded, it is the branch, the
  * commit message, and the three actions the Host offers: commit, commit and
  * push, push. Nothing polls: the state is read whenever the shown Session
@@ -245,7 +250,7 @@ window.__ModuleLoader__.load({
      * @returns the panel element.
      */
     function GitPanel(props) {
-      const { t, useSessions, language, useStore } = props
+      const { t, useSessions, usePanelInfo, language, useStore } = props
       const commitLanguage = useStore(selection => selection.choice)
       const [open, setOpen] = useState(false)
       const [view, setView] = useState('none')
@@ -280,6 +285,9 @@ window.__ModuleLoader__.load({
       useEffect(() => () => { window.clearTimeout(collapseTimer.current) }, [])
 
       const describe = (error) => (error instanceof Error ? error.message : String(error))
+      // Live: selecting a global panel is what takes this one off the frame,
+      // and returning to the Conversation is what puts it back.
+      const conversation = usePanelInfo(info => info.activePanelId === null)
       // Live: the frame's main view moving is what a Session switch is.
       const sessionId = useSessions(shownSessionId)
       /** One read per Session, kept so switching back shows numbers at once. */
@@ -303,13 +311,16 @@ window.__ModuleLoader__.load({
         if (owner === frameSession.current) setState(next)
       }
 
-      // Read on arrival and whenever the shown Session changes; nothing repeats
-      // on a timer. What this Session read last is shown first — a switch is a
-      // refresh, not a blank card.
+      // Read on arrival, whenever the shown Session changes, and on returning
+      // from an entry page; nothing repeats on a timer. What this Session read
+      // last is shown first — a switch, or coming back, is a refresh rather than
+      // a blank card. An entry page carries no panel, so it is read for nothing:
+      // the request waits until the Conversation is on the frame again.
       useEffect(() => {
         setView('none')
         setNote('')
         setState(sessionId === undefined ? undefined : states.current.get(sessionId))
+        if (!conversation) return undefined
         let cancelled = false
         let retry
         const read = async () => {
@@ -332,7 +343,7 @@ window.__ModuleLoader__.load({
           cancelled = true
           window.clearTimeout(retry)
         }
-      }, [t, sessionId])
+      }, [t, sessionId, conversation])
 
       // Escape closes whichever surface is open, so neither one is a trap. It
       // sits above the collapsed return: every render must call the same hooks.
@@ -437,10 +448,21 @@ window.__ModuleLoader__.load({
           h('span', { style: { color: 'var(--dsw-alias-state-error-primary)' } }, `-${grouped(deletions)}`))
         : null)
 
-      // Just below the frame's own chrome — its conversation header's bottom
-      // border sits about 75px down — and in from the right edge, where the
-      // frame's scrollbar is.
-      const anchor = { position: 'fixed', top: 82, right: 48, zIndex: 40, pointerEvents: 'auto' }
+      // Below the frame's own chrome, in from the right edge where the frame's
+      // scrollbar is: the Conversation header is a 76px block (title row plus
+      // view tabs) and the panel clears it by 13px. The packaged Windows app
+      // carries the caption row above that header, which the frame pads by —
+      // padding a fixed child is not offset by, so it adds the published height
+      // itself; everywhere else that row does not exist and the fallback is zero.
+      const anchor = {
+        position: 'fixed', top: 'calc(var(--dsh-windows-titlebar-height, 0px) + 89px)', right: 48,
+        zIndex: 40, pointerEvents: 'auto',
+      }
+
+      // An entry page owns the frame: nothing of this panel is on it. Every hook
+      // above is called first, so what the panel read for this Conversation is
+      // still here when the frame comes back to it.
+      if (!conversation) return null
 
       if (!open) {
         return h('button', {

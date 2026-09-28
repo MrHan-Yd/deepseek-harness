@@ -196,6 +196,8 @@ A profile may still install the bundle explicitly. The row id is the same, and t
 pnpm dsh plugin --profile web add link:/absolute/path/to/plugins/dsh-agent-scope
 ```
 
+`peerDependencies` carries `@deepseek-ai/dsh-tool-subagent`, the one dsh package the host half imports. A profile install links this directory from outside the profiles tree, so DSH answers that bare request from the running installation only because the accessed manifest declares it as a peer; the profile's `autoInstallPeers: false` keeps pnpm from installing a copy. Removing the declaration leaves the request to Node's own ancestor chain, where the package is absent, and the row fails to activate with `failed to import` ([lookup order](../../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.md#3-链接目录在每个祖先候选位置应用-peer-拦截)).
+
 ## Why this lives in `plugins/` and not `packages/`
 
 `plugins/` is outside the `packages/*/*` tier and its coverage gate, and its runtime files sit under `src/` rather than `lib/` (the repository root ignores `lib/`). The pnpm workspace lists `plugins/*` only so a profile boot can resolve the row name; that membership grants resolution and nothing else. The plugin is plain, directly auditable ESM with no build step, so `src/` is both the source and the artifact a reviewer reads.

@@ -16,6 +16,9 @@
     "cordis.patch.yml",
     "README.md"
   ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tool-subagent": "^0.1.7-rc.1"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

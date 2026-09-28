@@ -1,8 +1,11 @@
 # dsh-git-tools
 
 A floating git panel for the DeepSeek Harness Web UI. It registers into the
-frame-wide `shell.overlay` slot at the top-right, collapses to the branch name
-alone, and acts on the directory the Host resolves for the current work.
+frame-wide `shell.overlay` slot, sits at the top-right below the conversation
+header, collapses to the branch name alone, and acts on the directory the Host
+resolves for the current work. It belongs to the Conversation: while a global
+panel (the plugin manager and its kin) is the selected main panel, the frame
+carries no git pill at all.
 
 ## What it does
 
@@ -23,6 +26,20 @@ element mounted for the length of the animation. The keyframes come from one
 stylesheet the plugin installs and removes with itself, since a style attribute
 cannot declare them; its marker attribute is what lets `prefers-reduced-motion`
 switch every animation off.
+
+The corner is below the frame's own chrome and in from its right edge. The
+conversation header is a 76px block — title row plus view tabs — and the panel
+clears it by 13px. A packaged desktop frame also carries the Windows caption row
+above that header and pads its grid by the height it publishes as
+`--dsh-windows-titlebar-height`; padding does not offset a fixed child, so the
+panel adds that height itself. The browser and macOS publish no such row, and
+the fallback lands on the same step below the header.
+
+An entry page takes the frame, and the panel leaves with it: `shell.overlay` is
+frame-wide, so the entry reads the selected main panel — its `activePanelId` —
+and renders nothing while a global panel owns the centre. Nothing is read for a
+panel nobody can see either; the checkout is read again when the Conversation
+comes back.
 
 The tally is the changed-file count with the lines they add and remove, and the
 pill and the card's header render it from one element, so collapsing and opening
@@ -70,9 +87,10 @@ same on demand. Either way the text lands in the box first, so what is about to
 be committed is visible before it is.
 
 The panel reads the state when it appears, whenever the frame switches Sessions,
-and after each command. Nothing polls. Each Session's last read is kept, so
-switching back shows that Session's numbers at once and the read that follows
-replaces them — a switch is a refresh, not a blank card.
+whenever the Conversation comes back from an entry page, and after each command.
+Nothing polls. Each Session's last read is kept, so switching back shows that
+Session's numbers at once and the read that follows replaces them — a switch is a
+refresh, not a blank card.
 
 ## Which checkout it acts on
 
@@ -209,9 +227,10 @@ and renders the overlay entry the way the shell does — with **no** slot data a
 all — so the panel must appear and name the checkout the Host resolved, then
 drives opening it, the tally on the pill and in the header (present with line
 changes, absent when there are none), the commit body it sends, the message it has
-written, the not-a-repository state, and switching the Session the frame shows —
-including the read it shows from cache, and the re-ask when the Host has not
-opened that Session yet.
+written, the not-a-repository state, where the panel anchors below the frame
+chrome, that it is on the frame only while the Conversation is the selected main
+panel, and switching the Session the frame shows — including the read it shows
+from cache, and the re-ask when the Host has not opened that Session yet.
 
 ```sh
 node --test "plugins/dsh-git-tools/tests/*.test.mjs"
