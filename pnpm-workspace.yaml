@@ -22,6 +22,14 @@ overrides:
   'extract-zip>yauzl': '3.4.0'
   '@deepseek-ai/cosmokit': 'link:vendor/cosmokit'
   '@deepseek-ai/schemastery': 'link:vendor/schemastery'
+  # One copy of the micromark type vocabulary: the mdast/micromark stack and
+  # this repository's own markdown extensions must agree on it, because
+  # `fromMarkdown`'s `extensions` accepts only its own copy — 2.0.3 added
+  # `listItem` to `TokenTypeMap`, and `exactOptionalPropertyTypes` makes the two
+  # copies mutually unassignable. Regenerating the lockfile without this pin
+  # splits them again (the client build then fails TS2769 in
+  # packages/client/ui-primitives/src/markdown/parse.ts).
+  micromark-util-types: '2.0.3'
 
 peerDependencyRules:
   allowedVersions:
