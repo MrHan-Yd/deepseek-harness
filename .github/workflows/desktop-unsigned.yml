@@ -63,7 +63,9 @@ jobs:
         run: pnpm --dir native/system run build:ts
 
       # Release settings are file-owned; an unsigned macOS package needs the
-      # application identifier and the mandatory-update origins only.
+      # application identifier, the selected mandatory-update origin, and the
+      # test policy's allowed login origins — the validator requires a nonempty
+      # `allowedAuthOrigins` whenever the test deployment is selected.
       - name: Write packaging environment
         run: |
           cat > apps/desktop/.env.macos <<'ENV'
@@ -71,6 +73,7 @@ jobs:
           DSH_DESKTOP_AUTO_UPDATE_ENV=test
           DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://harness-test.deepseek.com
           DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://harness.deepseek.com
+          DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://harness-test.deepseek.com"]}'
           ENV
 
       - name: Package (ad-hoc signed)
@@ -129,7 +132,9 @@ jobs:
         run: pnpm --dir native/system run build:ts
 
       # Release settings are file-owned; an unsigned Windows package needs the
-      # application identifier and the mandatory-update origins only.
+      # application identifier, the selected mandatory-update origin, and the
+      # test policy's allowed login origins (nonempty `allowedAuthOrigins` is
+      # required for the test deployment).
       - name: Write packaging environment
         shell: pwsh
         run: |
@@ -138,6 +143,7 @@ jobs:
           DSH_DESKTOP_AUTO_UPDATE_ENV=test
           DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://harness-test.deepseek.com
           DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://harness.deepseek.com
+          DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://harness-test.deepseek.com"]}'
           '@ | Set-Content -Path apps/desktop/.env.windows -Encoding utf8
 
       - name: Package (unsigned)
