@@ -5,8 +5,9 @@
  * The browser half renders one floating entry at the frame's top-right; this
  * half answers it over a same-origin HTTP API and runs the commands through the
  * composition's own `shell` service, so a command is confined by whatever
- * sandbox mode the deployment is in (a `read-only` session cannot commit) and
- * appears in the Host's own command execution rather than beside it.
+ * sandbox mode the deployment is in (a `read-only` deployment cannot commit,
+ * and the write boundary is the workspace the panel is showing) and appears in
+ * the Host's own command execution rather than beside it.
  *
  * What the panel can do is deliberately narrow: read the state, switch to an
  * existing branch, commit (optionally staging every change first), and push.
@@ -136,8 +137,12 @@ function messageSystem(locale) {
  * `GIT_OPTIONAL_LOCKS=0` the read would try to write `.git/index` and be
  * refused by the same policy that makes it portable.
  *
- * A write leaves `sandboxPolicy` unset: the executor applies the deployment's
- * own mode, which is what makes a `read-only` setting mean what it says here
+ * A write asks for the deployment's own mode bounded to `cwd`. An agentless
+ * `sandboxPolicy.resolve()` answers with the deployment's fallback root, which is
+ * the Host process's own working directory — the Desktop launcher starts the
+ * runtime in its profile project, never in the workspace a person opened — and
+ * the `workspace-write` backends grant writes under the resolved root alone. The
+ * mode is not chosen here, so a `read-only` deployment refuses these commands
  * too. A denial therefore comes back as a failure with git's or the sandbox's
  * own words, not as a silently different outcome.
  *
@@ -159,6 +164,9 @@ async function runGit(ctx, cwd, args, limit = GIT_TEXT_LIMIT, readOnly = false) 
   if (readOnly) {
     request.env = { GIT_OPTIONAL_LOCKS: '0' }
     const policy = readOnlyPolicy(ctx)
+    if (policy !== undefined) request.sandboxPolicy = policy
+  } else {
+    const policy = writePolicy(ctx, cwd)
     if (policy !== undefined) request.sandboxPolicy = policy
   }
   const spec = ctx.shell.resolve(request)
@@ -200,6 +208,30 @@ function readOnlyPolicy(ctx) {
     policy = undefined
   }
   return policy
+}
+
+/**
+ * The deployment's own mode, bounded to the directory this panel acts on.
+ *
+ * Every request this plugin serves belongs to one Session, so the panel runs in
+ * the workspace that Session was opened in — which is not where the Host
+ * process started. A write that let the policy service supply the whole policy
+ * would therefore be bounded to the deployment's fallback root and refused
+ * outside it, so the boundary moves to `cwd` and nothing else does: the mode,
+ * including a deployment pinned to `read-only`, is the deployment's answer.
+ *
+ * @param ctx - plugin context.
+ * @param cwd - the workspace directory the command runs in.
+ * @returns the deployment's policy bounded to `cwd`, or `undefined` where no policy service is mounted.
+ */
+function writePolicy(ctx, cwd) {
+  let policy
+  try {
+    policy = ctx.get('sandboxPolicy')?.resolve()
+  } catch {
+    policy = undefined
+  }
+  return policy === undefined ? undefined : { ...policy, workspaceRoot: cwd }
 }
 
 /**

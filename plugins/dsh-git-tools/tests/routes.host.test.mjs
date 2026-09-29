@@ -22,6 +22,9 @@ import { apply } from '../src/index.js'
 /** The directory every request in this file resolves to. */
 const REPO = 'D:\\ws\\repo'
 
+/** The directory the Host process itself started in, which every agentless policy answers with. */
+const HOST_DIR = 'C:\\host\\profile-project'
+
 /** One git command's canned answer, in the executor's own result form. */
 function commandAnswer(command, head, untracked) {
   const text = (value) => ({ exitCode: 0, stdout: { text: value }, stderr: { text: '' } })
@@ -48,17 +51,24 @@ function commandAnswer(command, head, untracked) {
 
 /**
  * Mount the plugin against a stubbed composition and reach its handler.
- * @param options - `llm: false` mounts a deployment with no model service.
- * @returns the handler, the recorded git commands, the directories, and the model calls.
+ * @param options - `llm: false` mounts a deployment with no model service; `deploymentMode` is the sandbox mode the policy service answers with.
+ * @returns the handler, the recorded git commands, their directories, their resolved sandbox policies, and the model calls.
  */
 function mount(options = {}) {
   const commands = []
   const workdirs = []
+  const policies = []
   const calls = []
   let head = 'master'
   let registered
   const services = {
     connection: { requestRejection: () => undefined },
+    sandboxPolicy: {
+      resolve: (request) => ({
+        mode: request?.mode ?? options.deploymentMode ?? 'workspace-write',
+        workspaceRoot: HOST_DIR,
+      }),
+    },
     agents: {
       get: (id) => (id === 'session-1'
         ? {
@@ -113,19 +123,23 @@ function mount(options = {}) {
     get: (name) => services[name],
     shell: {
       resolve: (request) => request,
-      run: async (spec) => {
+      execute: async (spec) => {
         commands.push(spec.command)
         workdirs.push(spec.workdir)
+        policies.push(spec.sandboxPolicy)
+        // The executor hands back a handle whose result settles later; every
+        // answer here is already known, so the handle settles immediately.
+        const handle = (result) => ({ result: async () => result })
         // Switching branches changes what HEAD answers afterwards, as it does.
         const checkout = /^git checkout (?:-b )?(\S+)$/.exec(spec.command)
         if (checkout !== null) {
           head = checkout[1]
-          return { exitCode: 0, stdout: { text: '' }, stderr: { text: '' } }
+          return handle({ exitCode: 0, stdout: { text: '' }, stderr: { text: '' } })
         }
         // Git for Windows runs hooks through its own sh.exe, which a sandboxed
         // process cannot start: git then reports the shell's crash text.
         if (options.shellStartupFails === true && spec.command.startsWith('git commit')) {
-          return {
+          return handle({
             exitCode: 1,
             stdout: { text: '' },
             stderr: {
@@ -133,9 +147,9 @@ function mount(options = {}) {
                 + "    938 [main] sh (26628) D:\\Git\\Git\\usr\\bin\\sh.exe: *** fatal error - couldn't create signal pipe, Win32 error 5\n"
                 + 'Loaded modules:\n000210040000 msys-2.0.dll\n',
             },
-          }
+          })
         }
-        return commandAnswer(spec.command, head, options.untracked ?? ['b.txt'])
+        return handle(commandAnswer(spec.command, head, options.untracked ?? ['b.txt']))
       },
     },
     webServer: { register: (route) => { registered = route; return () => {} } },
@@ -143,7 +157,7 @@ function mount(options = {}) {
   apply(ctx)
   assert.equal(registered.kind, 'prefix')
   assert.equal(registered.path, '/git-tools')
-  return { handler: registered.handler, commands, workdirs, calls }
+  return { handler: registered.handler, commands, workdirs, policies, calls }
 }
 
 /**
@@ -247,6 +261,40 @@ test('a command route reaches git through the composed shell executor', async ()
   assert.equal(call.res.status, 200)
   assert.equal(call.json().branch, 'dev', 'the state comes back as it now is')
   assert.ok(commands.includes('git checkout dev'), `checked out through the shell: ${commands.join(', ')}`)
+})
+
+test('a write is bounded to the workspace the panel shows, not to the Host’s own directory', async () => {
+  const writing = mount()
+  const call = exchange('POST', '/git-tools/api/checkout', { body: { sessionId: 'session-1', branch: 'dev' } })
+  await writing.handler(call.req, call.res)
+
+  const index = writing.commands.indexOf('git checkout dev')
+  assert.ok(index >= 0, `checked out through the shell: ${writing.commands.join(', ')}`)
+  assert.equal(
+    writing.policies[index].workspaceRoot,
+    REPO,
+    'the write boundary is the workspace, so the ACL grant covers the .git it writes',
+  )
+  assert.equal(writing.policies[index].mode, 'workspace-write', 'the mode stays the deployment’s answer')
+
+  const reading = mount()
+  const state = exchange('GET', '/git-tools/api/state?sessionId=session-1')
+  await reading.handler(state.req, state.res)
+
+  assert.ok(reading.commands.length > 0, 'the state route reads the repository')
+  for (const [at, command] of reading.commands.entries()) {
+    assert.equal(reading.policies[at].mode, 'read-only', `${command} asks for the confined policy`)
+  }
+})
+
+test('a deployment pinned to read-only keeps refusing the panel’s writes', async () => {
+  const { handler, commands, policies } = mount({ deploymentMode: 'read-only' })
+  const call = exchange('POST', '/git-tools/api/checkout', { body: { sessionId: 'session-1', branch: 'dev' } })
+  await handler(call.req, call.res)
+
+  const index = commands.indexOf('git checkout dev')
+  assert.ok(index >= 0, `checked out through the shell: ${commands.join(', ')}`)
+  assert.equal(policies[index].mode, 'read-only', 'the mode is never chosen here')
 })
 
 test('a commit whose hooks cannot start says what happened, not the shell’s stack trace', async () => {

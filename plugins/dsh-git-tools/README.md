@@ -129,9 +129,16 @@ another checkout is never silent.
 ## Where the commands run
 
 Through the composition's own `shell` service — the same executor the `bash` /
-`pwsh` tools use — with the deployment's sandbox mode, so a `read-only` session
-cannot commit and a denial is reported with the sandbox's own words instead of
-being silently dropped. `sandboxPolicy` is deliberately not overridden.
+`pwsh` tools use — under the deployment's sandbox mode, so a `read-only`
+deployment cannot commit and a denial is reported with the sandbox's own words
+instead of being silently dropped. The mode is never chosen here. The write
+boundary is: an agentless `sandboxPolicy.resolve()` answers with the deployment's
+fallback root — the Host process's own directory, which for the Desktop launcher
+is its profile project rather than the workspace a person opened — and the
+`workspace-write` backends grant writes under that resolved root alone. A write
+therefore resolves the deployment's mode against the directory the panel is
+acting on; without that, nothing the panel writes could leave the Host's own
+directory.
 
 Two things never reach a command line as free text: a branch name must match
 `[A-Za-z0-9._/-]{1,200}` without a leading `-` or `..`, and a commit message is
@@ -220,9 +227,10 @@ rename records and its unquoted non-ASCII paths. `tests/routes.host.test.mjs`
 drives the HTTP routes against a stubbed composition, so a route the page calls
 can never fall through to the 404 branch, the trust fence is checked before any
 git command, a Session with no live Agent is answered as pending rather than as
-another checkout, a new file's lines are counted against real files on disk, and
-the message route is shown to call the Session's own model over the diff the
-commit would take. `tests/panel.client.test.mjs` boots the browser half in jsdom
+another checkout, a new file's lines are counted against real files on disk, a
+write is bounded to the workspace the panel is showing rather than to whatever
+directory the Host process started in, and the message route is shown to call the
+Session's own model over the diff the commit would take. `tests/panel.client.test.mjs` boots the browser half in jsdom
 and renders the overlay entry the way the shell does — with **no** slot data at
 all — so the panel must appear and name the checkout the Host resolved, then
 drives opening it, the tally on the pill and in the header (present with line
@@ -266,6 +274,11 @@ node --test "plugins/dsh-git-tools/tests/*.test.mjs"
   one line instead of git's stack trace, and the commit dialog's `跳过 Git hooks
   （--no-verify）` switch is the way through: it is off by default, and arming it
   says it bypasses the repository's own checks.
+- **A write is bounded to the Session's own directory.** That directory is the
+  write boundary the panel resolves, and git keeps `.git` at the repository root:
+  a Session opened below that root writes outside its own grant, so its commit is
+  refused. Granting the root instead would hand the panel more than the Session
+  that asked for it already has.
 - **A Session that is still opening shows nothing for a moment.** The panel asks
   again once, 400 ms later; a Session that takes longer than that to get its Agent
   stays on its title until the next switch or command.
