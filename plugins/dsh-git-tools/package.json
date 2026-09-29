@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-tools",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "A floating git panel for the DeepSeek Harness Web UI: the current workspace's branch, switching to an existing branch, and commit / commit-and-push / push.",
   "type": "module",

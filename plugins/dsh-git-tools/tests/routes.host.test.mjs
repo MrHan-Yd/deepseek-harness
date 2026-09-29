@@ -25,6 +25,18 @@ const REPO = 'D:\\ws\\repo'
 /** The directory the Host process itself started in, which every agentless policy answers with. */
 const HOST_DIR = 'C:\\host\\profile-project'
 
+/** The MSYS dump a confined process leaves when a hook cannot start. */
+const HOOK_DENIAL = '      0 [main] sh (26628) cygheap_user::init: NtSetInformationToken (TokenDefaultDacl), 0xC0000022\n'
+  + "    938 [main] sh (26628) D:\\Git\\Git\\usr\\bin\\sh.exe: *** fatal error - couldn't create signal pipe, Win32 error 5\n"
+  + 'Loaded modules:\n000210040000 msys-2.0.dll\n'
+
+/** The MSYS dump a confined process leaves when git's askpass helper cannot start. */
+const ASKPASS_DENIAL = '      0 [main] sh (38120) D:\\Git\\Git\\usr\\bin\\sh.exe: *** fatal error - '
+  + 'NtCreateDirectoryObject(\\BaseNamedObjects\\msys-2.0S5-b358afe6ca1efef4): 0xC0000022\n'
+  + 'Stack trace:\n0000005FB7F0 00021005FEBA msys-2.0.dll+0x1FEBA\nLoaded modules:\n000210040000 msys-2.0.dll\n'
+  + 'error: failed to execute prompt script (exit code 66)\n'
+  + "fatal: could not read Username for 'https://github.com': No such file or directory\n"
+
 /** One git command's canned answer, in the executor's own result form. */
 function commandAnswer(command, head, untracked) {
   const text = (value) => ({ exitCode: 0, stdout: { text: value }, stderr: { text: '' } })
@@ -139,15 +151,12 @@ function mount(options = {}) {
         // Git for Windows runs hooks through its own sh.exe, which a sandboxed
         // process cannot start: git then reports the shell's crash text.
         if (options.shellStartupFails === true && spec.command.startsWith('git commit')) {
-          return handle({
-            exitCode: 1,
-            stdout: { text: '' },
-            stderr: {
-              text: '      0 [main] sh (26628) cygheap_user::init: NtSetInformationToken (TokenDefaultDacl), 0xC0000022\n'
-                + "    938 [main] sh (26628) D:\\Git\\Git\\usr\\bin\\sh.exe: *** fatal error - couldn't create signal pipe, Win32 error 5\n"
-                + 'Loaded modules:\n000210040000 msys-2.0.dll\n',
-            },
-          })
+          return handle({ exitCode: 1, stdout: { text: '' }, stderr: { text: HOOK_DENIAL } })
+        }
+        // The same confinement reaches the askpass helper a credential prompt
+        // runs through, which is what a push reports instead.
+        if (options.pushStartupFails === true && spec.command.startsWith('git push')) {
+          return handle({ exitCode: 1, stdout: { text: '' }, stderr: { text: ASKPASS_DENIAL } })
         }
         return handle(commandAnswer(spec.command, head, options.untracked ?? ['b.txt']))
       },
@@ -306,9 +315,22 @@ test('a commit whose hooks cannot start says what happened, not the shell’s st
 
   assert.equal(call.res.status, 400)
   const error = call.json().error
-  assert.match(error, /could not run this repository's hooks/u, 'it names what failed')
+  assert.match(error, /could not start Git's own sh\.exe/u, 'it names what failed')
   assert.match(error, /permission mode/u, 'and what can be done about it')
   assert.equal(error.includes('msys-2.0.dll'), false, 'the stack trace never reaches the page')
+  assert.equal(error.split('\n').length, 1, 'one line, not a dump')
+})
+
+test('a push a confined process cannot start says the same, not MSYS’s dump', async () => {
+  const { handler } = mount({ pushStartupFails: true })
+  const call = exchange('POST', '/git-tools/api/push', { body: { sessionId: 'session-1' } })
+  await handler(call.req, call.res)
+
+  assert.equal(call.res.status, 400)
+  const error = call.json().error
+  assert.match(error, /could not start Git's own sh\.exe/u, 'the askpass helper is named by what blocked it')
+  assert.equal(error.includes('msys-2.0.dll'), false, 'the stack trace never reaches the page')
+  assert.equal(error.includes('NtCreateDirectoryObject'), false, 'nor the object MSYS was refused')
   assert.equal(error.split('\n').length, 1, 'one line, not a dump')
 })
 
@@ -333,6 +355,30 @@ test('the hooks bypass is asked for by hand, and only then reaches git', async (
   assert.equal(bypassed.res.status, 200)
   assert.ok(
     skipping.commands.some(command => command.startsWith('git commit --no-verify -F')),
+    `the bypass lands on the command line: ${skipping.commands.join(', ')}`,
+  )
+})
+
+test('the push carries the same bypass, because pre-push is a hook too', async () => {
+  const keeping = mount()
+  const plain = exchange('POST', '/git-tools/api/push', { body: { sessionId: 'session-1' } })
+  await keeping.handler(plain.req, plain.res)
+
+  assert.equal(plain.res.status, 200)
+  assert.ok(keeping.commands.includes('git push'), `pushed through the shell: ${keeping.commands.join(', ')}`)
+  assert.equal(
+    keeping.commands.some(command => command.includes('--no-verify')),
+    false,
+    'by default the repository’s hooks still run',
+  )
+
+  const skipping = mount()
+  const bypassed = exchange('POST', '/git-tools/api/push', { body: { sessionId: 'session-1', skipHooks: true } })
+  await skipping.handler(bypassed.req, bypassed.res)
+
+  assert.equal(bypassed.res.status, 200)
+  assert.ok(
+    skipping.commands.includes('git push --no-verify'),
     `the bypass lands on the command line: ${skipping.commands.join(', ')}`,
   )
 })

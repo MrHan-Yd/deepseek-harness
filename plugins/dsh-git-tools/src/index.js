@@ -52,6 +52,18 @@ const GIT_STDOUT_MAX_BYTES = 256 * 1024
 const GIT_TEXT_LIMIT = 4000
 
 /**
+ * The signatures MSYS leaves when a confined process cannot start it.
+ *
+ * Git for Windows reaches every hook, and the askpass helper behind a credential
+ * prompt, through its own `sh.exe`. Every one of these is MSYS speaking about its
+ * own denied startup — the object it was refused (`NtCreateDirectoryObject`,
+ * `NtSetInformationToken`), the pipe it could not create, the initialization that
+ * died, or its own module in the crash listing — so a message about the sandbox
+ * is only produced from evidence the sandbox actually left.
+ */
+const MSYS_DENIAL = /couldn't create signal pipe|cygheap_user::init|NtCreateDirectoryObject|NtSetInformationToken|msys-2\.0\.dll/u
+
+/**
  * Cap on the text one state read keeps, in characters.
  *
  * The state is summed rather than shown, so the response's own cap would cut
@@ -253,12 +265,13 @@ function assertOk(result, what) {
 /**
  * What to tell the page about a git command that failed.
  *
- * Git for Windows runs every hook through its own `sh.exe`, and a sandboxed
- * process is given no signal pipe — so MSYS dies before the hook body runs and
- * git reports its crash instead: a failing directory plus a stack trace several
- * dozen lines long, none of which names the commit. That text is replaced by
- * what actually happened, because the raw dump is unreadable in a dialog and
- * says nothing a person can act on.
+ * On Windows the sandbox blocks Git's own `sh.exe` — the interpreter every hook
+ * runs through, and the one a credential prompt runs its askpass helper in — so
+ * MSYS dies inside its own startup and git reports that dying process instead: a
+ * fatal error, a Win32 status, and a stack trace several dozen lines long, none
+ * of which names the operation. Any of those signatures is replaced by what
+ * actually happened, because the raw dump is unreadable in a dialog and says
+ * nothing a person can act on.
  *
  * @param result - the outcome of {@link runGit}.
  * @param what - the operation name for the message.
@@ -266,9 +279,9 @@ function assertOk(result, what) {
  */
 function failureText(result, what) {
   const said = `${result.stderr}\n${result.stdout}`
-  if (/couldn't create signal pipe|cygheap_user::init/u.test(said)) {
-    return `git ${what} could not run this repository's hooks: the sandbox blocks Git's own sh.exe. `
-      + 'Commit from a session whose permission mode allows it, or skip the hooks.'
+  if (MSYS_DENIAL.test(said)) {
+    return `git ${what} could not start Git's own sh.exe, which the deployment's sandbox blocks. `
+      + 'Raise the permission mode, or skip the hooks by hand, to run it.'
   }
   return result.stderr.trim() || result.stdout.trim() || `git ${what} exited ${String(result.exitCode)}`
 }
@@ -749,7 +762,7 @@ export function apply(ctx) {
           if (req.method === 'POST' && route === `${API_PATH}/push`) {
             const body = await readJson(req)
             const cwd = requiredCwd(ctx, body)
-            assertOk(await runGit(ctx, cwd, ['push']), 'push')
+            assertOk(await runGit(ctx, cwd, ['push', ...body?.skipHooks === true ? ['--no-verify'] : []]), 'push')
             sendJson(res, 200, { ok: true, ...(await readState(ctx, cwd)) })
             return
           }

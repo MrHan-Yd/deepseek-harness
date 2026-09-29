@@ -103,7 +103,7 @@ window.__ModuleLoader__.load({
       languageEn: 'English',
       stageAll: '包含未暂存的更改',
       skipHooks: '跳过 Git hooks（--no-verify）',
-      skipHooksWarn: '将绕过仓库自己的提交检查。',
+      skipHooksWarn: '将绕过仓库自己的 Git hooks（提交前与推送前的检查）。',
       files: '个文件',
       clean: '没有未提交的更改',
       uncommitted: '未提交的更改',
@@ -139,7 +139,7 @@ window.__ModuleLoader__.load({
       languageEn: 'English',
       stageAll: 'Include unstaged changes',
       skipHooks: 'Skip Git hooks (--no-verify)',
-      skipHooksWarn: 'This bypasses the repository’s own commit checks.',
+      skipHooksWarn: 'This bypasses the repository’s own Git hooks, before commit and before push.',
       files: 'files',
       clean: 'No uncommitted changes',
       uncommitted: 'Uncommitted changes',
@@ -415,10 +415,13 @@ window.__ModuleLoader__.load({
         const text = await messageFor()
         const next = await request('POST', '/commit', { sessionId, message: text, stageAll, skipHooks })
         setMessage('')
-        return push ? await request('POST', '/push', { sessionId }) : next
+        return push ? await request('POST', '/push', { sessionId, skipHooks }) : next
       })
 
-      const push = () => run(() => request('POST', '/push', { sessionId }))
+      // The switch above the rows governs this one too: `pre-push` is a hook, and
+      // Git for Windows reaches it through the same `sh.exe` a confined sandbox
+      // refuses. Without it the panel's push could never run on that deployment.
+      const push = () => run(() => request('POST', '/push', { sessionId, skipHooks }))
 
       const branch = state?.branch ?? null
       const repo = state?.repo === true
@@ -621,10 +624,11 @@ window.__ModuleLoader__.load({
         h('div', { style: { flex: 1 } }),
         h('span', { style: { opacity: 0.6 } }, changed === 0 ? t('clean') : `${changed} ${t('files')}`)),
 
-      // The one way to commit a repository whose hooks cannot start: Git for
+      // The one way to run a repository whose hooks cannot start: Git for
       // Windows runs them through its own `sh.exe`, which a confined sandbox
-      // refuses. It is asked for by hand, and says what it costs, because the
-      // hooks are the repository's own gates.
+      // refuses. It covers commit and push alike — `pre-push` is a hook too —
+      // and it is asked for by hand, and says what it costs, because the hooks
+      // are the repository's own gates.
       h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' } },
         h('input', {
           type: 'checkbox',

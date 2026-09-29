@@ -478,13 +478,37 @@ test('the hooks bypass is armed by hand, says what it costs, and rides the commi
 
   await page.flush(() => { box.click() })
   assert.equal(box.checked, true)
-  assert.ok(page.container.textContent.includes('将绕过仓库自己的提交检查。'), 'arming it says what it costs')
+  assert.ok(page.container.textContent.includes('将绕过仓库自己的 Git hooks（提交前与推送前的检查）。'), 'arming it says what it costs')
 
   await page.type(dialog.querySelector('textarea'), 'fix: it')
   await page.flush(() => { page.byLabel('提交').click() })
   const call = page.calls.find(entry => entry.url.endsWith('/commit'))
   assert.equal(call.body.skipHooks, true, 'and only an armed box reaches git')
   assert.equal(call.body.stageAll, true)
+
+  await page.close()
+})
+
+test('the push carries the same armed bypass, because pre-push is a hook too', async () => {
+  const page = await openPanel({
+    cwd: 'D:\\ws\\repo', repo: true, branch: 'master', branches: ['master'], changedFiles: 1,
+    insertions: 2, deletions: 0, upstream: 'origin/master', ahead: 2,
+  })
+  await page.flush(() => { page.pill().click() })
+  await page.flush(() => { page.byLabel('提交或推送').click() })
+  await page.flush(() => { page.byLabel('推送').click() })
+
+  const plain = page.calls.find(entry => entry.url.endsWith('/push'))
+  assert.deepEqual(plain.body, { sessionId: 'session-1', skipHooks: false }, 'the hooks still run by default')
+
+  const dialog = page.container.querySelector('[role="dialog"]')
+  const box = [...dialog.querySelectorAll('input[type="checkbox"]')]
+    .find(candidate => candidate.parentElement.textContent.includes('跳过 Git hooks'))
+  await page.flush(() => { box.click() })
+  await page.flush(() => { page.byLabel('推送').click() })
+
+  const bypassed = page.calls.filter(entry => entry.url.endsWith('/push')).at(-1)
+  assert.equal(bypassed.body.skipHooks, true, 'an armed box rides the push, which a confined sandbox cannot run otherwise')
 
   await page.close()
 })

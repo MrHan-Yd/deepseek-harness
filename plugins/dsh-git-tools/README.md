@@ -71,9 +71,10 @@ it — with the branch and the line counts, the message, the `包含未暂存的
 switch beside the changed-file count, a `跳过 Git hooks（--no-verify）` switch, and
 three rows: 提交, 提交并推送, 推送. Escape, a click on the veil, or picking a
 branch closes it. The hooks switch is off by default and, once armed, states that
-it bypasses the repository's own commit checks: it exists for a repository whose
-hooks cannot start under the sandbox (see the limitations), and the decision to
-bypass them is the person's, never a fallback the panel takes on its own.
+it bypasses the repository's own Git hooks. It governs all three rows, because
+`pre-push` is a hook too: it exists for a repository whose hooks cannot start
+under the sandbox (see the limitations), and the decision to bypass them is the
+person's, never a fallback the panel takes on its own.
 
 推送 is grey when there is nothing to publish: the branch tracks an upstream and
 is level with it, which the Host reads from the same `status --porcelain=v2`
@@ -167,8 +168,8 @@ hostname re-resolves to `127.0.0.1` could run git in a directory of its choosing
 | POST | `/git-tools/api/checkout` | `{ sessionId, branch }` — switch to an existing branch |
 | POST | `/git-tools/api/create-branch` | `{ sessionId, branch }` — create and check out a new branch |
 | POST | `/git-tools/api/message` | `{ sessionId, stageAll, locale }` — have the Session's model write a commit message from the pending change, in the language the panel is showing |
-| POST | `/git-tools/api/commit` | `{ sessionId, message, stageAll }` — commit, staging every change first when `stageAll` |
-| POST | `/git-tools/api/push` | `{ sessionId }` — push |
+| POST | `/git-tools/api/commit` | `{ sessionId, message, stageAll, skipHooks }` — commit, staging every change first when `stageAll`, with `--no-verify` when `skipHooks` |
+| POST | `/git-tools/api/push` | `{ sessionId, skipHooks }` — push, with `--no-verify` when `skipHooks` |
 
 ## The message the model writes
 
@@ -229,12 +230,14 @@ can never fall through to the 404 branch, the trust fence is checked before any
 git command, a Session with no live Agent is answered as pending rather than as
 another checkout, a new file's lines are counted against real files on disk, a
 write is bounded to the workspace the panel is showing rather than to whatever
-directory the Host process started in, and the message route is shown to call the
+directory the Host process started in, the hooks bypass reaches `git push` as
+well as `git commit`, an MSYS startup failure behind either one is answered with
+one line instead of its dump, and the message route is shown to call the
 Session's own model over the diff the commit would take. `tests/panel.client.test.mjs` boots the browser half in jsdom
 and renders the overlay entry the way the shell does — with **no** slot data at
 all — so the panel must appear and name the checkout the Host resolved, then
 drives opening it, the tally on the pill and in the header (present with line
-changes, absent when there are none), the commit body it sends, the message it has
+changes, absent when there are none), the bodies it sends for commit and push, the message it has
 written, the not-a-repository state, where the panel anchors below the frame
 chrome, that it is on the frame only while the Conversation is the selected main
 panel, and switching the Session the frame shows — including the read it shows
@@ -248,8 +251,9 @@ node --test "plugins/dsh-git-tools/tests/*.test.mjs"
 
 - **No merge, rebase, fetch, stash, or graph.** Publishing history is the point
   here; the rest belongs in a terminal, which the sidebar already offers.
-- **Push runs `git push` with no arguments.** A branch with no upstream fails
-  with git's own message rather than being published with `-u`.
+- **Push carries no other arguments.** A branch with no upstream fails with git's
+  own message rather than being published with `-u`; the only argument this panel
+  adds is the `--no-verify` the hooks switch asks for.
 - **The written message is not a Session event.** It reaches a model but is not
   appended to the log, so a replay does not reproduce it and the Session's token
   accounting does not include it. Making it durable means adding a session event,
@@ -266,14 +270,17 @@ node --test "plugins/dsh-git-tools/tests/*.test.mjs"
   rather than read, so a working tree whose changes are dominated by one huge new
   file under-reports. Counting them through git instead would mean staging them
   into a scratch index, which writes to the repository.
-- **Hooks that are shell scripts cannot run under a confined session on Windows.**
-  Git for Windows runs every hook through its own `sh.exe`, and a sandboxed process
-  is given no signal pipe, so MSYS dies before the hook body runs and the commit
-  aborts. That is the deployment's sandbox rather than this plugin — the `pwsh`
-  tool cannot commit in such a repository either. The panel reports the cause in
-  one line instead of git's stack trace, and the commit dialog's `跳过 Git hooks
-  （--no-verify）` switch is the way through: it is off by default, and arming it
-  says it bypasses the repository's own checks.
+- **Anything git reaches through its own `sh.exe` cannot start under a confined
+  deployment on Windows.** That is every hook, and the askpass helper a credential
+  prompt runs through, so a commit and a push both die before their own work and
+  MSYS prints its startup failure instead: a Win32 status, a stack trace, and the
+  loaded modules. That is the deployment's sandbox rather than this plugin — the
+  `pwsh` tool cannot commit in such a repository either. The panel reports the
+  cause in one line instead of that dump, and the `跳过 Git hooks（--no-verify）`
+  switch is the way through the hooks: it is off by default, governs 提交,
+  提交并推送, and 推送 alike, and says it bypasses the repository's own checks. A
+  push whose credential helper is what cannot start still needs a permission mode
+  that lets git prompt.
 - **A write is bounded to the Session's own directory.** That directory is the
   write boundary the panel resolves, and git keeps `.git` at the repository root:
   a Session opened below that root writes outside its own grant, so its commit is
