@@ -1,6 +1,6 @@
 # dsh-mcp-scope
 
-Workspace-scoped MCP server management for DeepSeek Harness. Adds a **MCP 服务器** page to Settings that creates, edits, and removes [`@deepseek-ai/dsh-mcp-client`](../../deepseek-harness/packages/mcp/mcp-client/README.md) servers at one of two scopes:
+Workspace-scoped MCP server management for DeepSeek Harness. Adds a **MCP 服务器** page to Settings that creates, edits, and removes [`@deepseek-ai/dsh-mcp-client`](../../packages/mcp/mcp-client/README.md) servers at one of two scopes:
 
 - **全局 (global)** — the server's tools are visible to every session.
 - **工作区 (workspace)** — the server's tools are visible only to sessions whose canonical working directory is that workspace or a directory below it.
@@ -200,7 +200,9 @@ dsh plugin --profile <profile> add /absolute/path/to/deepseek-harness/plugins/ds
 
 This plugin takes no build step: `src/index.js`, `src/probe.js`, `src/readonly.js`, `src/spawn-target.js`, `src/scope.js`, and `src/client.js` are the shipped sources.
 
-`peerDependencies` carries the three dsh packages the host half imports: `@deepseek-ai/dsh-mcp-client`, `@deepseek-ai/dsh-subprocess`, and `@deepseek-ai/dsh-tools`. A profile install links this directory from outside the profiles tree, so DSH answers those bare requests from the running installation only where the accessed manifest declares them as peers; the profile's `autoInstallPeers: false` keeps pnpm from installing copies. Removing a declaration leaves the request to Node's own ancestor chain, where none of them exist, and the row fails to activate with `failed to import` ([lookup order](../../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.md#3-链接目录在每个祖先候选位置应用-peer-拦截)).
+`peerDependencies` carries the three dsh packages the host half imports: `@deepseek-ai/dsh-mcp-client`, `@deepseek-ai/dsh-subprocess`, and `@deepseek-ai/dsh-tools`. A profile install links this directory from outside the profiles tree, so DSH answers those bare requests from the running installation only where the accessed manifest declares them as peers; the profile's `autoInstallPeers: false` keeps pnpm from installing copies. Removing a declaration leaves the request to Node's own ancestor chain, where none of them exist, and the row fails to activate with `failed to import` ([lookup order](../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.md#3-linked-directories-peer-interception-at-each-ancestor-position)).
+
+The declared range is `workspace:*`. `plugins/*` are pnpm workspace packages of the same checkout that produces the runtime, and the compatibility preflight reads `workspace:^`, `workspace:~`, and `workspace:*` as the running runtime's own version, so a row installed from this checkout is admitted by every dsh release it is built beside. A pinned release range names one dsh release instead and refuses every later one until it is edited, so the row reads as incompatible on the next release ([range semantics](../../packages/boot/app-boot/README.md#profiles)).
 
 ## Tests
 

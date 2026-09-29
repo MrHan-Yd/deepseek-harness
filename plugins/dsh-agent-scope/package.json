@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-scope",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Workspace-scoped named sub-agents for DeepSeek Harness: a Settings page that creates delegation targets at global scope or scoped to one workspace, mounted as official dsh-tool-subagent instances.",
   "type": "module",
@@ -17,7 +17,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@deepseek-ai/dsh-tool-subagent": "^0.1.7-rc.1"
+    "@deepseek-ai/dsh-tool-subagent": "workspace:*"
   },
   "dsh": {
     "bundle": {

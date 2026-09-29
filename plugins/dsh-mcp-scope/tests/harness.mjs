@@ -78,8 +78,8 @@ export function loadBundle() {
           }, item.label)
         }))
       : null)
-  const IconChevronDownOutline14 = () => React.createElement('svg')
-  const IconTrashOutline16 = () => React.createElement('svg')
+  const IconChevronDownOutlineRegular = () => React.createElement('svg')
+  const IconTrashOutlineRegular = () => React.createElement('svg')
 
   const state = {
     servers: [],
@@ -104,7 +104,7 @@ export function loadBundle() {
   const module = loaded.factory((spec) => {
     required.push(spec)
     if (spec === 'react') return React
-    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutline14, IconTrashOutline16, Menu }
+    if (spec === '@deepseek-ai/dsh-client-ui-primitives') return { IconChevronDownOutlineRegular, IconTrashOutlineRegular, Menu }
     throw new Error(`unexpected require(${JSON.stringify(spec)})`)
   })
 
